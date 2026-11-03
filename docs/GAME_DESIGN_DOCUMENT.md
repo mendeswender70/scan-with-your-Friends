@@ -109,9 +109,9 @@ Critérios de aceitação da vertical slice:
 
 ## 8. Diferença para o protótipo atual
 
-Hoje o projeto tem uma sala feita de formas simples, uma câmera que se aproxima ao sentar, uma interface `OnGUI` em retrato, chamadas/valores predefinidos e respostas locais por regras. Já existe uma estrutura para conectar um servidor de diálogo, ainda desligada. O jogador **não entra num desktop funcional**: telefone e formulários são telas de fluxo, sem janelas persistentes ou notificação de chamada sobre o PC. Também não há navegação física livre, IA ativa, áudio de ligação ou cooperativo. Os números atuais estão em [Regras do protótipo](PROTOTYPE_RULES.md).
+O protótipo agora faz a passagem **mesa → desktop → chamada recebida → telefone e aplicativo simultâneos**. A câmera se aproxima do monitor, a interface do PC ocupa a tela e uma notificação oferece atender ou recusar. Durante a ligação, Telefone e aplicativos permanecem lado a lado. A implementação ainda usa `OnGUI`, sala feita de formas simples, casos e valores predefinidos e respostas locais por regras. Não há navegação física livre, IA ativa, áudio de ligação ou cooperativo. Os números atuais estão em [Regras do protótipo](PROTOTYPE_RULES.md).
 
-Portanto, a próxima mudança de mecânica, quando retomarmos a implementação, deve ser o **fluxo mesa → desktop → chamada recebida → telefone e aplicativo simultâneos**. Polir gráficos da sala antes disso não resolverá o principal problema apontado pelo jogador.
+O próximo teste com o jogador deve verificar se essa transição e o uso simultâneo dos aplicativos realmente transmitem a experiência de trabalhar no PC. Depois disso, a prioridade é aprofundar a conversa e as tarefas, antes de polir os gráficos da sala.
 
 ## 9. Decisões e perguntas ainda abertas
 

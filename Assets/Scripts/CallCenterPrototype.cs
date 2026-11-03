@@ -11,7 +11,8 @@ public sealed class CallCenterPrototype : MonoBehaviour
 
     [SerializeField] private string dialogueServerUrl = "";
 
-    private enum Phase { Morning, Standing, Ringing, Talking, MethodSelection, MethodSteps, Result, Review }
+    private enum Phase { Morning, Standing, EnteringDesktop, DesktopIdle, Ringing, Talking, Result, Review }
+    private enum DesktopApp { Home, Methods, Task, Notes }
     private enum LocalIntent { Details, Ticket, Reference, Other }
 
     private struct Caller
@@ -78,10 +79,10 @@ public sealed class CallCenterPrototype : MonoBehaviour
     private int earnedToday;
     private int conversationTurns;
     private int selectedMethod = -1;
+    private DesktopApp desktopApp = DesktopApp.Home;
     private int lastEarning;
     private string typedMessage = "";
     private string lastPlayerLine = "";
-    private string lastCallerLine = "";
     private string resultText = "";
     private string dialogueHistory = "";
     private string dialogueStatus = "Sem IA: pergunte problema, protocolo ou referência";
@@ -96,14 +97,22 @@ public sealed class CallCenterPrototype : MonoBehaviour
     private float shiftRemaining;
     private float ringRemaining;
     private float patienceRemaining;
+    private float desktopDelay;
+    private float transitionRemaining;
+    private Vector2 phoneScroll;
     private string previousMessage = "";
     private Caller activeCaller;
     private GUIStyle titleStyle;
     private GUIStyle bodyStyle;
     private GUIStyle smallStyle;
+    private GUIStyle dialogueStyle;
     private GUIStyle buttonStyle;
     private GUIStyle fieldStyle;
     private GUIStyle panelStyle;
+    private GUIStyle desktopStyle;
+    private GUIStyle windowStyle;
+    private GUIStyle modalStyle;
+    private GUIStyle headerStyle;
     private Camera officeCamera;
     private readonly List<Texture2D> uiTextures = new List<Texture2D>();
 
@@ -113,12 +122,20 @@ public sealed class CallCenterPrototype : MonoBehaviour
 
     private void Awake()
     {
+#if UNITY_ANDROID || UNITY_IOS
+        Screen.orientation = ScreenOrientation.LandscapeLeft;
+#endif
         BuildOffice();
     }
 
     private void Update()
     {
         if (phase == Phase.Morning || phase == Phase.Review) return;
+        if (phase == Phase.EnteringDesktop)
+        {
+            transitionRemaining -= Time.deltaTime;
+            if (transitionRemaining <= 0) OpenDesktop();
+        }
         shiftRemaining = Mathf.Max(0, shiftRemaining - Time.deltaTime);
         if (shiftRemaining <= 0)
         {
@@ -126,12 +143,17 @@ public sealed class CallCenterPrototype : MonoBehaviour
             return;
         }
 
-        if (phase == Phase.Ringing)
+        if (phase == Phase.DesktopIdle)
+        {
+            desktopDelay -= Time.deltaTime;
+            if (desktopDelay <= 0) StartRinging();
+        }
+        else if (phase == Phase.Ringing)
         {
             ringRemaining = Mathf.Max(0, ringRemaining - Time.deltaTime);
             if (ringRemaining <= 0) EndCall("A chamada não foi atendida a tempo.");
         }
-        else if (phase == Phase.Talking || phase == Phase.MethodSelection || phase == Phase.MethodSteps)
+        else if (phase == Phase.Talking)
         {
             patienceRemaining = Mathf.Max(0, patienceRemaining - Time.deltaTime);
             if (patienceRemaining <= 0) EndCall("A pessoa perdeu a paciência e desligou.");
@@ -141,10 +163,10 @@ public sealed class CallCenterPrototype : MonoBehaviour
     private void LateUpdate()
     {
         if (officeCamera == null) return;
-        bool seated = phase == Phase.Ringing || phase == Phase.Talking ||
-            phase == Phase.MethodSelection || phase == Phase.MethodSteps || phase == Phase.Result;
-        Vector3 position = seated ? new Vector3(0, 2.8f, -2.7f) : new Vector3(5.8f, 6.2f, -9.5f);
-        Vector3 focus = seated ? new Vector3(0, 1.5f, 0.5f) : new Vector3(0, 0.8f, 1.2f);
+        bool seated = phase == Phase.EnteringDesktop || phase == Phase.DesktopIdle ||
+            phase == Phase.Ringing || phase == Phase.Talking || phase == Phase.Result;
+        Vector3 position = seated ? new Vector3(0, 1.7f, -1.8f) : new Vector3(5.8f, 6.2f, -9.5f);
+        Vector3 focus = seated ? new Vector3(0, 1.55f, 0.05f) : new Vector3(0, 0.8f, 1.2f);
         officeCamera.transform.position = Vector3.Lerp(officeCamera.transform.position, position, Time.deltaTime * 2.5f);
         Quaternion rotation = Quaternion.LookRotation(focus - officeCamera.transform.position);
         officeCamera.transform.rotation = Quaternion.Slerp(officeCamera.transform.rotation, rotation, Time.deltaTime * 2.5f);
@@ -153,7 +175,6 @@ public sealed class CallCenterPrototype : MonoBehaviour
     private void BeginCall()
     {
         callSerial++;
-        activeCaller = Callers[(callsCompleted + day - 1) % Callers.Length];
         conversationTurns = 0;
         callerTrust = 45;
         patienceRemaining = CallerPatienceSeconds;
@@ -166,8 +187,10 @@ public sealed class CallCenterPrototype : MonoBehaviour
         awaitingReply = false;
         typedMessage = "";
         lastPlayerLine = "";
-        lastCallerLine = activeCaller.Problem;
-        dialogueHistory = "";
+        dialogueHistory = "Pessoa: " + activeCaller.Problem + "\n";
+        phoneScroll = Vector2.zero;
+        desktopApp = DesktopApp.Home;
+        desktopStatus = "Escolha um programa quando estiver pronto para a tarefa.";
         dialogueStatus = string.IsNullOrWhiteSpace(dialogueServerUrl)
             ? "Sem IA: pergunte problema, protocolo ou referência" : "Conversa livre com IA configurada";
         phase = Phase.Talking;
@@ -221,8 +244,8 @@ public sealed class CallCenterPrototype : MonoBehaviour
 
     private void ApplyReply(string reply, string status, LocalIntent intent)
     {
-        lastCallerLine = reply;
         dialogueHistory += "Você: " + lastPlayerLine + "\nPessoa: " + reply + "\n";
+        phoneScroll.y = 100000f;
         if (intent == LocalIntent.Ticket) ticketKnown = true;
         if (intent == LocalIntent.Reference) referenceKnown = true;
         conversationTurns++;
@@ -236,7 +259,7 @@ public sealed class CallCenterPrototype : MonoBehaviour
 
     private void ChooseMethod(int index)
     {
-        if (phase != Phase.MethodSelection) return;
+        if (phase != Phase.Talking || index < 0 || index >= Methods.Length) return;
         PaymentMethod method = Methods[index];
         if (callerTrust < method.RequiredTrust)
         {
@@ -250,12 +273,12 @@ public sealed class CallCenterPrototype : MonoBehaviour
         }
         selectedMethod = index;
         desktopStatus = "Preencha os campos com informações desta chamada. Se precisar, volte ao telefone.";
-        phase = Phase.MethodSteps;
+        desktopApp = DesktopApp.Task;
     }
 
     private void CompleteTask()
     {
-        if (phase != Phase.MethodSteps || selectedMethod < 0 || patienceRemaining <= 0) return;
+        if (phase != Phase.Talking || selectedMethod < 0 || patienceRemaining <= 0) return;
         PaymentMethod method = Methods[selectedMethod];
         if (callerTrust < method.RequiredTrust)
         {
@@ -291,21 +314,41 @@ public sealed class CallCenterPrototype : MonoBehaviour
         phase = Phase.Standing;
     }
 
+    private void EnterDesktop()
+    {
+        if (phase != Phase.Standing) return;
+        transitionRemaining = 1.25f;
+        phase = Phase.EnteringDesktop;
+    }
+
+    private void OpenDesktop()
+    {
+        desktopApp = DesktopApp.Home;
+        desktopDelay = 3f;
+        phase = Phase.DesktopIdle;
+    }
+
+    private void LeaveDesktop()
+    {
+        if (phase == Phase.DesktopIdle) phase = Phase.Standing;
+    }
+
     private void StartRinging()
     {
+        activeCaller = Callers[(callsCompleted + day - 1) % Callers.Length];
         ringRemaining = RingSeconds;
         phase = Phase.Ringing;
     }
 
     private void EndCall(string reason, bool zeroEarning = true)
     {
-        if (phase != Phase.Ringing && phase != Phase.Talking &&
-            phase != Phase.MethodSelection && phase != Phase.MethodSteps) return;
+        if (phase != Phase.Ringing && phase != Phase.Talking) return;
         callSerial++;
         awaitingReply = false;
         if (zeroEarning) lastEarning = 0;
         callsCompleted++;
         resultText = reason;
+        desktopApp = DesktopApp.Home;
         phase = Phase.Result;
     }
 
@@ -327,123 +370,215 @@ public sealed class CallCenterPrototype : MonoBehaviour
 
     private void OnGUI()
     {
-        float scale = Mathf.Min(Screen.width / 1080f, Screen.height / 1920f);
-        float left = (Screen.width - 1080f * scale) * 0.5f;
-        float top = (Screen.height - 1920f * scale) * 0.5f;
+        float scale = Mathf.Min(Screen.width / 1600f, Screen.height / 900f);
+        float left = (Screen.width - 1600f * scale) * 0.5f;
+        float top = (Screen.height - 900f * scale) * 0.5f;
         Matrix4x4 previous = GUI.matrix;
         GUI.matrix = Matrix4x4.TRS(new Vector3(left, top, 0), Quaternion.identity, new Vector3(scale, scale, 1));
         EnsureStyles();
 
-        GUI.Box(new Rect(35, 35, 1010, 430), "", panelStyle);
-        GUI.Label(new Rect(80, 75, 930, 90), "SCAN WITH YOUR FRIENDS", titleStyle);
-        GUI.Label(new Rect(80, 180, 930, 75), "Dia " + day + "  |  Chamadas " + callsCompleted + "/" + CallsPerDay, bodyStyle);
-        GUI.Label(new Rect(80, 280, 930, 75), "Dinheiro fictício: $" + earnedToday + " / $" + DailyQuota, bodyStyle);
-        string statusLine = phase == Phase.Morning ? "Meta do expediente" : "Tempo " + FormatTime(shiftRemaining);
-        if (phase == Phase.Ringing) statusLine += "  |  Toques " + Mathf.CeilToInt(ringRemaining) + "s";
-        if (phase == Phase.Talking || phase == Phase.MethodSelection || phase == Phase.MethodSteps)
-            statusLine += "  |  Confiança " + callerTrust + "%  |  Paciência " + Mathf.CeilToInt(patienceRemaining) + "s";
-        GUI.Label(new Rect(80, 370, 930, 65), statusLine, smallStyle);
-
-        bool viewingOffice = phase == Phase.Morning || phase == Phase.Standing;
-        GUI.Box(viewingOffice ? new Rect(35, 1390, 1010, 490) : new Rect(35, 855, 1010, 1025), "", panelStyle);
-        if (phase == Phase.Morning)
-        {
-            GUI.Label(new Rect(80, 1430, 930, 160), "O expediente vai começar. Entre no escritório e vá até sua mesa.", bodyStyle);
-            Button(1670, "INICIAR DIA", BeginShift);
-        }
-        else if (phase == Phase.Standing)
-        {
-            GUI.Label(new Rect(80, 1430, 930, 160), "Sua mesa está à frente. Sente-se para usar o telefone e os programas do PC.", bodyStyle);
-            Button(1670, "SENTAR NO PC", StartRinging);
-        }
-        else if (phase == Phase.Ringing)
-        {
-            Label("O telefone está tocando. Entenda o problema e pergunte pelos dados fictícios que o programa do PC pedir.");
-            Button(1510, "ATENDER CHAMADA", BeginCall);
-        }
-        else if (phase == Phase.Talking)
-        {
-            GUI.Label(new Rect(80, 900, 930, 100), activeCaller.Name, titleStyle);
-            GUI.Label(new Rect(80, 1010, 930, 160), "Pessoa: " + lastCallerLine, bodyStyle);
-            if (lastPlayerLine.Length > 0)
-                GUI.Label(new Rect(80, 1180, 930, 90), "Você: " + lastPlayerLine, smallStyle);
-            GUI.Label(new Rect(80, 1300, 930, 65), dialogueStatus, smallStyle);
-            typedMessage = GUI.TextField(new Rect(80, 1380, 930, 100), typedMessage, 160, fieldStyle);
-            GUI.enabled = !awaitingReply;
-            Button(1510, awaitingReply ? "AGUARDANDO..." : "ENVIAR RESPOSTA", SendMessage);
-            if (conversationTurns >= 2 && !awaitingReply)
-                Button(1655, "ABRIR MÉTODOS NO PC", delegate
-                {
-                    desktopStatus = "Os campos do programa usam pistas dadas durante a conversa.";
-                    phase = Phase.MethodSelection;
-                });
-            GUI.enabled = true;
-            SmallButton(1790, "DESLIGAR", delegate { EndCall("Você encerrou a chamada."); });
-        }
-        else if (phase == Phase.MethodSelection)
-        {
-            GUI.Label(new Rect(80, 900, 930, 100), "Programas do PC", titleStyle);
-            GUI.Label(new Rect(80, 1010, 930, 100), "Escolha um programa. Cada um exige confiança e informações da conversa.", smallStyle);
-            GUI.Label(new Rect(80, 1100, 930, 75), desktopStatus, smallStyle);
-            for (int i = 0; i < Methods.Length; i++)
-            {
-                int methodIndex = i;
-                Button(1190 + i * 160, Methods[i].Name + "  $" + PayoutFor(i) + "  |  " + Methods[i].RequiredTrust + "%",
-                    delegate { ChooseMethod(methodIndex); });
-            }
-            SmallButton(1680, "VOLTAR À CONVERSA", delegate { phase = Phase.Talking; });
-            SmallButton(1790, "DESLIGAR", delegate { EndCall("Você encerrou a chamada."); });
-        }
-        else if (phase == Phase.MethodSteps)
-        {
-            PaymentMethod method = Methods[selectedMethod];
-            GUI.Label(new Rect(80, 900, 930, 110), method.Name, titleStyle);
-            GUI.Label(new Rect(80, 1020, 930, 65), "Protocolo fictício do atendimento", smallStyle);
-            ticketInput = GUI.TextField(new Rect(80, 1090, 930, 95), ticketInput, 30, fieldStyle);
-            GUI.Label(new Rect(80, 1210, 930, 65), method.ReferenceLabel, smallStyle);
-            referenceInput = GUI.TextField(new Rect(80, 1280, 930, 95), referenceInput, 30, fieldStyle);
-            GUI.Label(new Rect(80, 1380, 930, 65), "Anotações: " + (ticketKnown ? activeCaller.Ticket : "protocolo ?")
-                + "  |  " + (referenceKnown ? activeCaller.Reference : "referência ?"), smallStyle);
-            GUI.Label(new Rect(80, 1450, 930, 75), desktopStatus, smallStyle);
-            Button(1530, "VALIDAR TAREFA NO PC", CompleteTask);
-            SmallButton(1700, "VOLTAR À CONVERSA", delegate { phase = Phase.Talking; });
-            SmallButton(1790, "DESLIGAR", delegate { EndCall("Você encerrou a chamada."); });
-        }
-        else if (phase == Phase.Result)
-        {
-            Label(resultText);
-            GUI.Label(new Rect(80, 1250, 930, 100), "+$" + lastEarning, titleStyle);
-            Button(1510, "CONTINUAR", delegate
-            {
-                if (callsCompleted >= CallsPerDay || shiftRemaining <= 0) EndShift();
-                else StartRinging();
-            });
-        }
+        if (phase == Phase.Morning || phase == Phase.Standing ||
+            phase == Phase.EnteringDesktop || phase == Phase.Review)
+            DrawOfficeInterface();
         else
-        {
-            bool passed = earnedToday >= DailyQuota;
-            GUI.Label(new Rect(80, 900, 930, 150), passed ? "Meta cumprida!" : "Meta não atingida", titleStyle);
-            GUI.Label(new Rect(80, 1080, 930, 180),
-                "Avaliação do chefe: $" + earnedToday + " arrecadados em " + CallsPerDay + " chamadas. Meta: $" + DailyQuota + ".", bodyStyle);
-            Button(1510, passed ? "PRÓXIMO DIA" : "REINICIAR DIA", delegate { ResetDay(passed); });
-        }
+            DrawDesktopInterface();
 
         GUI.matrix = previous;
     }
 
-    private void Label(string text)
+    private void DrawOfficeInterface()
     {
-        GUI.Label(new Rect(80, 920, 930, 290), text, bodyStyle);
+        GUI.Box(new Rect(40, 35, 950, 145), "", panelStyle);
+        GUI.Label(new Rect(70, 55, 880, 65), "SCAN WITH YOUR FRIENDS", titleStyle);
+        GUI.Label(new Rect(70, 120, 870, 45),
+            "Dia " + day + "  •  Meta fictícia $" + DailyQuota + "  •  Chamadas " + callsCompleted + "/" + CallsPerDay, smallStyle);
+        GUI.Box(new Rect(35, 635, 1530, 220), "", panelStyle);
+        if (phase == Phase.Morning)
+        {
+            GUI.Label(new Rect(70, 665, 1050, 65), "O expediente vai começar. Sua mesa está à frente.", bodyStyle);
+            UiButton(new Rect(1165, 680, 350, 95), "INICIAR DIA", BeginShift);
+        }
+        else if (phase == Phase.Standing)
+        {
+            GUI.Label(new Rect(70, 665, 1050, 85), "Sente-se à mesa para entrar no computador e começar a receber chamadas.", bodyStyle);
+            UiButton(new Rect(1165, 680, 350, 95), "SENTAR NO PC", EnterDesktop);
+        }
+        else if (phase == Phase.EnteringDesktop)
+        {
+            GUI.Label(new Rect(70, 685, 1200, 80), "Entrando no computador...", bodyStyle);
+        }
+        else
+        {
+            bool passed = earnedToday >= DailyQuota;
+            GUI.Label(new Rect(70, 655, 1040, 65), passed ? "Meta cumprida!" : "Meta não atingida", titleStyle);
+            GUI.Label(new Rect(70, 725, 1050, 90),
+                "Avaliação: $" + earnedToday + " arrecadados em " + callsCompleted + " chamadas. Meta: $" + DailyQuota + ".", smallStyle);
+            UiButton(new Rect(1165, 680, 350, 95), passed ? "PRÓXIMO DIA" : "REINICIAR DIA",
+                delegate { ResetDay(passed); });
+        }
     }
 
-    private void Button(float y, string text, System.Action action)
+    private void DrawDesktopInterface()
     {
-        if (GUI.Button(new Rect(80, y, 930, 120), text, buttonStyle)) action();
+        GUI.Box(new Rect(0, 0, 1600, 900), "", desktopStyle);
+        GUI.Box(new Rect(0, 0, 1600, 83), "", headerStyle);
+        GUI.Label(new Rect(40, 15, 580, 55), "CENTRAL / COMPUTADOR 01", titleStyle);
+        GUI.Label(new Rect(640, 25, 920, 45),
+            "Dia " + day + "  •  " + callsCompleted + "/" + CallsPerDay + " chamadas  •  " + FormatTime(shiftRemaining) +
+            "  •  $" + earnedToday + " / $" + DailyQuota, smallStyle);
+
+        if (phase == Phase.Talking)
+        {
+            DrawPhoneWindow();
+            DrawWorkWindow();
+        }
+        else
+        {
+            DrawDesktopHome();
+            if (phase == Phase.Ringing) DrawIncomingCall();
+            if (phase == Phase.Result) DrawCallResult();
+        }
+
+        GUI.Box(new Rect(0, 827, 1600, 73), "", headerStyle);
+        GUI.Label(new Rect(40, 845, 470, 45), "●  CENTRAL OS    |    TELEFONE    |    ARQUIVOS", smallStyle);
+        string footer = phase == Phase.Ringing ? "CHAMADA RECEBIDA • " + Mathf.CeilToInt(ringRemaining) + "s" :
+            phase == Phase.Talking ? "EM LIGAÇÃO • Confiança " + callerTrust + "% • Paciência " + Mathf.CeilToInt(patienceRemaining) + "s" :
+            "EXPEDIENTE EM ANDAMENTO";
+        GUI.Label(new Rect(800, 845, 750, 45), footer, smallStyle);
     }
 
-    private void SmallButton(float y, string text, System.Action action)
+    private void DrawDesktopHome()
     {
-        if (GUI.Button(new Rect(80, y, 930, 75), text, buttonStyle)) action();
+        GUI.Label(new Rect(75, 150, 900, 75), "Área de trabalho", titleStyle);
+        GUI.Label(new Rect(75, 230, 1130, 100),
+            phase == Phase.DesktopIdle ? "Computador iniciado. Aguarde a próxima chamada..." :
+            "Telefone, programas e anotações ficam abertos neste computador.", bodyStyle);
+        GUI.Box(new Rect(75, 390, 370, 250), "", windowStyle);
+        GUI.Label(new Rect(105, 425, 310, 65), "☎  TELEFONE", titleStyle);
+        GUI.Label(new Rect(105, 510, 300, 90), "As chamadas chegam aqui durante o expediente.", smallStyle);
+        GUI.Box(new Rect(470, 390, 370, 250), "", windowStyle);
+        GUI.Label(new Rect(500, 425, 310, 65), "▣  PROGRAMAS", titleStyle);
+        GUI.Label(new Rect(500, 510, 300, 90), "Use aplicativos para concluir cada caso fictício.", smallStyle);
+        GUI.Box(new Rect(865, 390, 370, 250), "", windowStyle);
+        GUI.Label(new Rect(895, 425, 310, 65), "▤  ANOTAÇÕES", titleStyle);
+        GUI.Label(new Rect(895, 510, 300, 90), "As pistas da conversa aparecem aqui.", smallStyle);
+        if (phase == Phase.DesktopIdle)
+            UiButton(new Rect(1260, 690, 280, 90), "SAIR DO PC", LeaveDesktop);
+    }
+
+    private void DrawIncomingCall()
+    {
+        GUI.Box(new Rect(450, 205, 700, 510), "", modalStyle);
+        GUI.Label(new Rect(505, 250, 600, 65), "CHAMADA RECEBIDA", titleStyle);
+        GUI.Label(new Rect(505, 345, 600, 120), activeCaller.Name, bodyStyle);
+        GUI.Label(new Rect(505, 475, 600, 70), "Atender ou recusar? " + Mathf.CeilToInt(ringRemaining) + "s", smallStyle);
+        UiButton(new Rect(505, 580, 285, 92), "RECUSAR", delegate { EndCall("Você recusou a chamada."); });
+        UiButton(new Rect(815, 580, 285, 92), "ATENDER", BeginCall);
+    }
+
+    private void DrawCallResult()
+    {
+        GUI.Box(new Rect(370, 195, 860, 530), "", modalStyle);
+        GUI.Label(new Rect(425, 240, 750, 65), "RESULTADO DA CHAMADA", titleStyle);
+        GUI.Label(new Rect(425, 345, 750, 145), resultText, bodyStyle);
+        GUI.Label(new Rect(425, 505, 750, 65), "+$" + lastEarning + " em dinheiro fictício", titleStyle);
+        UiButton(new Rect(425, 600, 750, 88), "CONTINUAR NO COMPUTADOR", delegate
+        {
+            if (callsCompleted >= CallsPerDay || shiftRemaining <= 0) EndShift();
+            else OpenDesktop();
+        });
+    }
+
+    private void DrawPhoneWindow()
+    {
+        GUI.Box(new Rect(35, 105, 725, 690), "", windowStyle);
+        GUI.Box(new Rect(35, 105, 725, 58), "", headerStyle);
+        GUI.Label(new Rect(62, 113, 650, 48), "☎  TELEFONE • CHAMADA ATIVA", smallStyle);
+        GUI.Label(new Rect(65, 178, 650, 65), activeCaller.Name, titleStyle);
+        GUI.Label(new Rect(65, 252, 650, 40), "Confiança " + callerTrust + "%  •  Paciência " +
+            Mathf.CeilToInt(patienceRemaining) + "s", smallStyle);
+
+        float historyHeight = Mathf.Max(250, dialogueStyle.CalcHeight(new GUIContent(dialogueHistory), 625) + 25);
+        phoneScroll = GUI.BeginScrollView(new Rect(65, 305, 665, 245), phoneScroll,
+            new Rect(0, 0, 625, historyHeight));
+        GUI.Label(new Rect(0, 0, 615, historyHeight), dialogueHistory, dialogueStyle);
+        GUI.EndScrollView();
+
+        GUI.Label(new Rect(65, 560, 650, 40), dialogueStatus, smallStyle);
+        typedMessage = GUI.TextField(new Rect(65, 610, 665, 65), typedMessage, 160, fieldStyle);
+        GUI.enabled = !awaitingReply;
+        UiButton(new Rect(65, 695, 435, 72), awaitingReply ? "AGUARDANDO..." : "ENVIAR MENSAGEM", SendMessage);
+        GUI.enabled = true;
+        UiButton(new Rect(520, 695, 210, 72), "DESLIGAR", delegate { EndCall("Você encerrou a chamada."); });
+    }
+
+    private void DrawWorkWindow()
+    {
+        GUI.Box(new Rect(785, 105, 780, 690), "", windowStyle);
+        GUI.Box(new Rect(785, 105, 780, 58), "", headerStyle);
+        GUI.Label(new Rect(810, 113, 740, 48), "▣  PROGRAMAS DO COMPUTADOR", smallStyle);
+
+        UiButton(new Rect(810, 178, 165, 62), "INÍCIO", delegate { desktopApp = DesktopApp.Home; });
+        UiButton(new Rect(988, 178, 165, 62), "MÉTODOS", delegate { desktopApp = DesktopApp.Methods; });
+        UiButton(new Rect(1166, 178, 165, 62), "TAREFA", delegate { desktopApp = DesktopApp.Task; });
+        UiButton(new Rect(1344, 178, 190, 62), "ANOTAÇÕES", delegate { desktopApp = DesktopApp.Notes; });
+
+        if (desktopApp == DesktopApp.Methods) DrawMethodsApp();
+        else if (desktopApp == DesktopApp.Task) DrawTaskApp();
+        else if (desktopApp == DesktopApp.Notes) DrawNotesApp();
+        else
+        {
+            GUI.Label(new Rect(825, 285, 690, 70), "Caso em andamento", titleStyle);
+            GUI.Label(new Rect(825, 380, 685, 190),
+                "Converse com a pessoa pelo telefone. Você pode abrir programas e anotações sem encerrar a ligação.", bodyStyle);
+            UiButton(new Rect(825, 655, 690, 90), "ABRIR PROGRAMAS", delegate { desktopApp = DesktopApp.Methods; });
+        }
+    }
+
+    private void DrawMethodsApp()
+    {
+        GUI.Label(new Rect(825, 265, 690, 60), "Escolha um programa", titleStyle);
+        GUI.Label(new Rect(825, 330, 690, 65), "As informações para a tarefa vêm da conversa.", smallStyle);
+        for (int i = 0; i < Methods.Length; i++)
+        {
+            int methodIndex = i;
+            UiButton(new Rect(825, 410 + i * 88, 690, 72),
+                Methods[i].Name + "  •  $" + PayoutFor(i) + "  •  Confiança " + Methods[i].RequiredTrust + "%",
+                delegate { ChooseMethod(methodIndex); });
+        }
+        GUI.Label(new Rect(825, 690, 690, 75), desktopStatus, smallStyle);
+    }
+
+    private void DrawTaskApp()
+    {
+        if (selectedMethod < 0)
+        {
+            GUI.Label(new Rect(825, 295, 690, 130), "Escolha primeiro um programa na aba Métodos.", bodyStyle);
+            return;
+        }
+        PaymentMethod method = Methods[selectedMethod];
+        GUI.Label(new Rect(825, 265, 690, 60), method.Name, titleStyle);
+        GUI.Label(new Rect(825, 340, 690, 42), "Protocolo fictício do atendimento", smallStyle);
+        ticketInput = GUI.TextField(new Rect(825, 385, 690, 60), ticketInput, 30, fieldStyle);
+        GUI.Label(new Rect(825, 455, 690, 42), method.ReferenceLabel, smallStyle);
+        referenceInput = GUI.TextField(new Rect(825, 500, 690, 60), referenceInput, 30, fieldStyle);
+        GUI.Label(new Rect(825, 570, 690, 70), desktopStatus, smallStyle);
+        UiButton(new Rect(825, 665, 690, 90), "VALIDAR TAREFA", CompleteTask);
+    }
+
+    private void DrawNotesApp()
+    {
+        GUI.Label(new Rect(825, 285, 690, 70), "Anotações do atendimento", titleStyle);
+        GUI.Label(new Rect(825, 380, 690, 240),
+            "Protocolo: " + (ticketKnown ? activeCaller.Ticket : "ainda não descoberto") + "\n\n" +
+            "Referência: " + (referenceKnown ? activeCaller.Reference : "ainda não descoberta"), bodyStyle);
+        GUI.Label(new Rect(825, 665, 690, 85),
+            "Se faltar algo, pergunte à pessoa; o telefone continua aberto ao lado.", smallStyle);
+    }
+
+    private void UiButton(Rect rect, string text, System.Action action)
+    {
+        if (GUI.Button(rect, text, buttonStyle)) action();
     }
 
     private static string FormatTime(float seconds)
@@ -457,12 +592,22 @@ public sealed class CallCenterPrototype : MonoBehaviour
         if (titleStyle != null) return;
         panelStyle = new GUIStyle(GUI.skin.box);
         panelStyle.normal.background = SolidTexture(new Color(0.04f, 0.09f, 0.14f, 0.92f));
+        desktopStyle = new GUIStyle(GUI.skin.box);
+        desktopStyle.normal.background = SolidTexture(new Color(0.10f, 0.18f, 0.28f));
+        windowStyle = new GUIStyle(GUI.skin.box);
+        windowStyle.normal.background = SolidTexture(new Color(0.05f, 0.10f, 0.17f));
+        modalStyle = new GUIStyle(GUI.skin.box);
+        modalStyle.normal.background = SolidTexture(new Color(0.07f, 0.15f, 0.23f));
+        headerStyle = new GUIStyle(GUI.skin.box);
+        headerStyle.normal.background = SolidTexture(new Color(0.03f, 0.07f, 0.12f));
         titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 46, fontStyle = FontStyle.Bold, wordWrap = true };
         titleStyle.normal.textColor = new Color(0.52f, 0.94f, 0.93f);
         bodyStyle = new GUIStyle(GUI.skin.label) { fontSize = 38, wordWrap = true };
         bodyStyle.normal.textColor = Color.white;
         smallStyle = new GUIStyle(GUI.skin.label) { fontSize = 29, wordWrap = true };
         smallStyle.normal.textColor = new Color(0.76f, 0.85f, 0.9f);
+        dialogueStyle = new GUIStyle(GUI.skin.label) { fontSize = 29, wordWrap = true };
+        dialogueStyle.normal.textColor = Color.white;
         buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = 31, fontStyle = FontStyle.Bold, wordWrap = true };
         buttonStyle.normal.background = SolidTexture(new Color(0.08f, 0.57f, 0.61f));
         buttonStyle.hover.background = SolidTexture(new Color(0.1f, 0.7f, 0.7f));
