@@ -7,6 +7,7 @@ Consulta feita em 3 de novembro de 2026. Este projeto é um jogo original inspir
 - O jogador trabalha em um call center com amigos, conversa em tempo real com personagens de IA e precisa atingir uma **meta diária** antes da avaliação do chefe.
 - Há modo solo e cooperativo online, progressão por dias, novas atividades, escritório interativo e incidentes como vírus e interrupções.
 - O computador do jogo inclui ferramentas e acesso remoto fictício. A conversa e a tarefa no computador fazem parte do ciclo de trabalho.
+- As capturas oficiais mostram clientes com nome, retrato, histórico de diálogo e indicador de confiança. Seus perfis variam, mas a conversa aparece como atendimento por telefone. As capturas não documentam um catálogo completo de problemas ou falas.
 
 Fontes: [página oficial na Steam](https://store.steampowered.com/app/4954910/Scam_With_Your_Friends/) e [site dos desenvolvedores](https://jataterworldwide.com/scam-with-your-friends/).
 
@@ -20,3 +21,5 @@ Não foram confirmados a lista completa de formas, as perguntas exatas, os valor
 ## Direção para nosso protótipo mobile
 
 O ciclo central é: começar o turno, sentar no PC, atender a chamada, conversar, escolher uma forma fictícia de pagamento, completar as etapas correspondentes no computador, contabilizar dinheiro e fechar o dia diante da meta. A conversa com IA real, o cooperativo e os incidentes são etapas futuras. Nenhum dado financeiro real deve ser solicitado ou armazenado.
+
+Os clientes do protótipo têm nomes e problemas cotidianos próprios, como acesso a aplicativos, pedidos e cobranças. Não reproduzem personagens nem diálogos do jogo original. As respostas continuam roteirizadas enquanto não houver serviço de IA conectado.

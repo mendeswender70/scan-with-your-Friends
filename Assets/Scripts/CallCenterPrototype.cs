@@ -12,12 +12,14 @@ public sealed class CallCenterPrototype : MonoBehaviour
         public string Name;
         public string Problem;
         public string FollowUp;
+        public string ReadyLine;
 
-        public Caller(string name, string problem, string followUp)
+        public Caller(string name, string problem, string followUp, string readyLine)
         {
             Name = name;
             Problem = problem;
             FollowUp = followUp;
+            ReadyLine = readyLine;
         }
     }
 
@@ -39,11 +41,16 @@ public sealed class CallCenterPrototype : MonoBehaviour
 
     private static readonly Caller[] Callers =
     {
-        new Caller("Lia, astronauta", "Meu calendário marcou segunda-feira duas vezes na Lua.", "Acho que preciso reorganizar minha semana espacial."),
-        new Caller("Beto, jardineiro", "Minhas plantas querem tirar férias antes de mim.", "Elas já escolheram uma praia imaginária."),
-        new Caller("Nina, inventora", "Minha máquina de fazer ideias ficou sem ideias.", "Um plano simples seria um ótimo começo."),
-        new Caller("Téo, padeiro", "Meu pão começou a contar piadas no forno.", "Agora a padaria inteira está rindo."),
-        new Caller("Rita, capitã", "Meu navio está navegando dentro de uma xícara.", "Talvez eu precise de um mapa bem pequeno.")
+        new Caller("Marta, professora", "Troquei de celular e agora não consigo entrar no aplicativo da escola.",
+            "O aviso diz que preciso confirmar meu acesso, mas não explica como.", "Entendi. O que você recomenda fazer primeiro?"),
+        new Caller("Paulo, comerciante", "Meu computador travou quando tentei abrir a planilha de estoque.",
+            "Reiniciei uma vez, mas ele continua muito lento.", "Certo. Posso acompanhar as etapas com você."),
+        new Caller("Renata, aposentada", "Recebi uma cobrança de uma assinatura que eu já tinha cancelado.",
+            "Tenho o comprovante do cancelamento guardado.", "Gostaria de entender como registrar essa reclamação."),
+        new Caller("Davi, estudante", "Meu pedido aparece como entregue no aplicativo, mas não chegou aqui.",
+            "Já conferi na portaria e ninguém recebeu nada.", "Tudo bem. Vamos ver o que consta no atendimento."),
+        new Caller("Helena, designer", "Não estou conseguindo abrir meu e-mail de trabalho desde ontem.",
+            "Preciso acessar um arquivo que me enviaram hoje cedo.", "Pode me explicar quais são os próximos passos?")
     };
 
     // These are fictional game tasks. They never request real payment details.
@@ -104,7 +111,7 @@ public sealed class CallCenterPrototype : MonoBehaviour
         if (phase != Phase.Talking || message.Length < 3) return;
 
         lastPlayerLine = message;
-        lastCallerLine = conversationTurns == 0 ? activeCaller.FollowUp : "Certo. Podemos continuar com a tarefa no computador.";
+        lastCallerLine = conversationTurns == 0 ? activeCaller.FollowUp : activeCaller.ReadyLine;
         conversationTurns++;
         typedMessage = "";
     }
