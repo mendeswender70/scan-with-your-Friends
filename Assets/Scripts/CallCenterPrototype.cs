@@ -5,13 +5,14 @@ public sealed class CallCenterPrototype : MonoBehaviour
 {
     private const int CallsPerDay = 5;
     private const int FirstQuota = 600;
-    private const float ShiftSeconds = 300f;
-    private const float RingSeconds = 20f;
-    private const float CallerPatienceSeconds = 75f;
+    private const float ShiftSeconds = 480f;
+    private const float RingSeconds = 25f;
+    private const float CallerPatienceSeconds = 120f;
 
     [SerializeField] private string dialogueServerUrl = "";
 
     private enum Phase { Morning, Standing, Ringing, Talking, MethodSelection, MethodSteps, Result, Review }
+    private enum LocalIntent { Details, Ticket, Reference, Other }
 
     private struct Caller
     {
@@ -19,13 +20,17 @@ public sealed class CallCenterPrototype : MonoBehaviour
         public string Problem;
         public string FollowUp;
         public string ReadyLine;
+        public string Ticket;
+        public string Reference;
 
-        public Caller(string name, string problem, string followUp, string readyLine)
+        public Caller(string name, string problem, string followUp, string readyLine, string ticket, string reference)
         {
             Name = name;
             Problem = problem;
             FollowUp = followUp;
             ReadyLine = readyLine;
+            Ticket = ticket;
+            Reference = reference;
         }
     }
 
@@ -33,44 +38,38 @@ public sealed class CallCenterPrototype : MonoBehaviour
     {
         public string Name;
         public int FictionalAmount;
-        public string[] Questions;
-        public string[] Replies;
+        public int RequiredTrust;
+        public string ReferenceLabel;
 
-        public PaymentMethod(string name, int amount, string[] questions, string[] replies)
+        public PaymentMethod(string name, int amount, int requiredTrust, string referenceLabel)
         {
             Name = name;
             FictionalAmount = amount;
-            Questions = questions;
-            Replies = replies;
+            RequiredTrust = requiredTrust;
+            ReferenceLabel = referenceLabel;
         }
     }
 
     private static readonly Caller[] Callers =
     {
         new Caller("Marta, professora", "Troquei de celular e agora não consigo entrar no aplicativo da escola.",
-            "O aviso diz que preciso confirmar meu acesso, mas não explica como.", "Entendi. O que você recomenda fazer primeiro?"),
+            "O aviso diz que preciso confirmar meu acesso, mas não explica como.", "Entendi. O que você recomenda fazer primeiro?", "ESC-104", "AULA"),
         new Caller("Paulo, comerciante", "Meu computador travou quando tentei abrir a planilha de estoque.",
-            "Reiniciei uma vez, mas ele continua muito lento.", "Certo. Posso acompanhar as etapas com você."),
+            "Reiniciei uma vez, mas ele continua muito lento.", "Certo. Posso acompanhar as etapas com você.", "EST-208", "LOJA"),
         new Caller("Renata, aposentada", "Recebi uma cobrança de uma assinatura que eu já tinha cancelado.",
-            "Tenho o comprovante do cancelamento guardado.", "Gostaria de entender como registrar essa reclamação."),
+            "Tenho o comprovante do cancelamento guardado.", "Gostaria de entender como registrar essa reclamação.", "ASS-315", "CANCELAMENTO"),
         new Caller("Davi, estudante", "Meu pedido aparece como entregue no aplicativo, mas não chegou aqui.",
-            "Já conferi na portaria e ninguém recebeu nada.", "Tudo bem. Vamos ver o que consta no atendimento."),
+            "Já conferi na portaria e ninguém recebeu nada.", "Tudo bem. Vamos ver o que consta no atendimento.", "PED-422", "ENTREGA"),
         new Caller("Helena, designer", "Não estou conseguindo abrir meu e-mail de trabalho desde ontem.",
-            "Preciso acessar um arquivo que me enviaram hoje cedo.", "Pode me explicar quais são os próximos passos?")
+            "Preciso acessar um arquivo que me enviaram hoje cedo.", "Pode me explicar quais são os próximos passos?", "MAIL-536", "ARQUIVO")
     };
 
     // These are fictional game tasks. They never request real payment details.
     private static readonly PaymentMethod[] Methods =
     {
-        new PaymentMethod("Gift card fictício", 180,
-            new[] { "Perguntar qual item virtual combina com a situação", "Confirmar o nome da missão no jogo", "Registrar a entrega imaginária no PC" },
-            new[] { "Escolhi um item virtual.", "Essa é a missão certa.", "Entrega registrada na simulação." }),
-        new PaymentMethod("Cartão de crédito fictício", 240,
-            new[] { "Confirmar a proposta fictícia escolhida", "Conferir o identificador da tarefa do jogo", "Concluir a simulação no PC" },
-            new[] { "Essa proposta funciona para mim.", "A tarefa do jogo está correta.", "Simulação concluída." }),
-        new PaymentMethod("Transferência de fichas", 120,
-            new[] { "Explicar o valor em fichas do jogo", "Confirmar a escolha do personagem", "Registrar as fichas no PC" },
-            new[] { "Entendi o valor em fichas.", "É essa minha escolha.", "Fichas registradas." })
+        new PaymentMethod("Gift card fictício", 180, 55, "Referência do item virtual"),
+        new PaymentMethod("Cartão de crédito fictício", 240, 70, "Referência da simulação"),
+        new PaymentMethod("Transferência de fichas", 120, 50, "Referência da tarefa")
     };
 
     private Phase phase = Phase.Morning;
@@ -78,15 +77,19 @@ public sealed class CallCenterPrototype : MonoBehaviour
     private int callsCompleted;
     private int earnedToday;
     private int conversationTurns;
-    private int selectedMethod;
-    private int methodStep;
+    private int selectedMethod = -1;
     private int lastEarning;
     private string typedMessage = "";
     private string lastPlayerLine = "";
     private string lastCallerLine = "";
     private string resultText = "";
     private string dialogueHistory = "";
-    private string dialogueStatus = "Simulação local, ainda sem IA";
+    private string dialogueStatus = "Sem IA: pergunte problema, protocolo ou referência";
+    private string ticketInput = "";
+    private string referenceInput = "";
+    private string desktopStatus = "";
+    private bool ticketKnown;
+    private bool referenceKnown;
     private bool awaitingReply;
     private int callSerial;
     private int callerTrust;
@@ -155,14 +158,18 @@ public sealed class CallCenterPrototype : MonoBehaviour
         callerTrust = 45;
         patienceRemaining = CallerPatienceSeconds;
         previousMessage = "";
-        methodStep = 0;
+        selectedMethod = -1;
+        ticketInput = "";
+        referenceInput = "";
+        ticketKnown = false;
+        referenceKnown = false;
         awaitingReply = false;
         typedMessage = "";
         lastPlayerLine = "";
         lastCallerLine = activeCaller.Problem;
         dialogueHistory = "";
         dialogueStatus = string.IsNullOrWhiteSpace(dialogueServerUrl)
-            ? "Simulação local, ainda sem IA" : "Conversa livre com IA configurada";
+            ? "Sem IA: pergunte problema, protocolo ou referência" : "Conversa livre com IA configurada";
         phase = Phase.Talking;
     }
 
@@ -173,9 +180,10 @@ public sealed class CallCenterPrototype : MonoBehaviour
 
         lastPlayerLine = message;
         typedMessage = "";
-        if (string.IsNullOrWhiteSpace(dialogueServerUrl))
+        LocalIntent intent = ClassifyIntent(message);
+        if (string.IsNullOrWhiteSpace(dialogueServerUrl) || intent == LocalIntent.Ticket || intent == LocalIntent.Reference)
         {
-            ApplyReply(LocalReply(), "Simulação local, ainda sem IA");
+            ApplyReply(LocalReply(intent), "Sem IA: pergunte problema, protocolo ou referência", intent);
             return;
         }
 
@@ -187,23 +195,40 @@ public sealed class CallCenterPrototype : MonoBehaviour
             {
                 if (serial != callSerial || phase != Phase.Talking) return;
                 awaitingReply = false;
-                ApplyReply(string.IsNullOrWhiteSpace(reply) ? LocalReply() : reply,
-                    error ?? "Conversa livre com IA configurada");
+                ApplyReply(string.IsNullOrWhiteSpace(reply) ? LocalReply(intent) : reply,
+                    error ?? "Conversa livre com IA configurada", intent);
             }));
     }
 
-    private string LocalReply()
+    private static LocalIntent ClassifyIntent(string message)
     {
-        return conversationTurns == 0 ? activeCaller.FollowUp : activeCaller.ReadyLine;
+        string text = message.ToLowerInvariant();
+        if (text.Contains("protocolo") || text.Contains("chamado") || text.Contains("ticket")) return LocalIntent.Ticket;
+        if (text.Contains("refer") || text.Contains("palavra") || text.Contains("categoria")) return LocalIntent.Reference;
+        if (text.Contains("problema") || text.Contains("aconteceu") || text.Contains("aparece") || text.Contains("ajuda"))
+            return LocalIntent.Details;
+        return LocalIntent.Other;
     }
 
-    private void ApplyReply(string reply, string status)
+    private string LocalReply(LocalIntent intent)
+    {
+        if (intent == LocalIntent.Ticket) return "O protocolo fictício é " + activeCaller.Ticket + ".";
+        if (intent == LocalIntent.Reference) return "A referência da tarefa é " + activeCaller.Reference + ".";
+        if (intent == LocalIntent.Details)
+            return conversationTurns == 0 ? activeCaller.FollowUp : activeCaller.ReadyLine;
+        return "Não entendi bem. O que você precisa saber sobre meu atendimento?";
+    }
+
+    private void ApplyReply(string reply, string status, LocalIntent intent)
     {
         lastCallerLine = reply;
         dialogueHistory += "Você: " + lastPlayerLine + "\nPessoa: " + reply + "\n";
+        if (intent == LocalIntent.Ticket) ticketKnown = true;
+        if (intent == LocalIntent.Reference) referenceKnown = true;
         conversationTurns++;
         bool repeated = string.Equals(lastPlayerLine, previousMessage, System.StringComparison.OrdinalIgnoreCase);
-        callerTrust = Mathf.Clamp(callerTrust + (repeated ? -15 : 12), 0, 100);
+        int trustChange = repeated ? -15 : intent == LocalIntent.Other ? 0 : intent == LocalIntent.Details ? 8 : 12;
+        callerTrust = Mathf.Clamp(callerTrust + trustChange, 0, 100);
         previousMessage = lastPlayerLine;
         dialogueStatus = status;
         if (callerTrust == 0) EndCall("A pessoa perdeu a confiança e desligou.");
@@ -212,46 +237,49 @@ public sealed class CallCenterPrototype : MonoBehaviour
     private void ChooseMethod(int index)
     {
         if (phase != Phase.MethodSelection) return;
-        if (callerTrust < 55)
+        PaymentMethod method = Methods[index];
+        if (callerTrust < method.RequiredTrust)
         {
-            lastCallerLine = "Ainda não me sinto à vontade para continuar.";
-            callerTrust = Mathf.Max(0, callerTrust - 10);
-            if (callerTrust == 0) EndCall("A pessoa perdeu a confiança e desligou.");
+            desktopStatus = "Confiança insuficiente para este programa. Volte à conversa.";
             return;
         }
-        if (selectedMethod != index) methodStep = 0;
+        if (selectedMethod != index)
+        {
+            ticketInput = "";
+            referenceInput = "";
+        }
         selectedMethod = index;
-        lastCallerLine = "Vamos começar.";
+        desktopStatus = "Preencha os campos com informações desta chamada. Se precisar, volte ao telefone.";
         phase = Phase.MethodSteps;
-    }
-
-    private void AskQuestion(int questionIndex)
-    {
-        if (phase != Phase.MethodSteps) return;
-        PaymentMethod method = Methods[selectedMethod];
-        if (methodStep >= method.Questions.Length) return;
-
-        if (questionIndex == methodStep)
-        {
-            patienceRemaining = Mathf.Max(0, patienceRemaining - 4f);
-            lastCallerLine = method.Replies[methodStep];
-            methodStep++;
-        }
-        else
-        {
-            patienceRemaining = Mathf.Max(0, patienceRemaining - 10f);
-            callerTrust = Mathf.Max(0, callerTrust - 12);
-            lastCallerLine = "Essa pergunta não combina com o que conversamos agora.";
-        }
-
-        if (callerTrust <= 0) EndCall("A pessoa perdeu a confiança e desligou.");
-        else if (patienceRemaining <= 0) EndCall("A pessoa perdeu a paciência durante a tarefa.");
     }
 
     private void CompleteTask()
     {
-        if (phase != Phase.MethodSteps || methodStep != Methods[selectedMethod].Questions.Length ||
-            callerTrust < 55 || patienceRemaining <= 0) return;
+        if (phase != Phase.MethodSteps || selectedMethod < 0 || patienceRemaining <= 0) return;
+        PaymentMethod method = Methods[selectedMethod];
+        if (callerTrust < method.RequiredTrust)
+        {
+            desktopStatus = "A confiança caiu. Volte ao telefone antes de concluir a tarefa.";
+            return;
+        }
+        if (!ticketKnown || !referenceKnown)
+        {
+            desktopStatus = "Faltam informações da conversa. Pergunte ao cliente antes de validar.";
+            return;
+        }
+
+        bool validTicket = string.Equals(ticketInput.Trim(), activeCaller.Ticket, System.StringComparison.OrdinalIgnoreCase);
+        bool validReference = string.Equals(referenceInput.Trim(), activeCaller.Reference, System.StringComparison.OrdinalIgnoreCase);
+        if (!validTicket || !validReference)
+        {
+            callerTrust = Mathf.Max(0, callerTrust - 5);
+            patienceRemaining = Mathf.Max(0, patienceRemaining - 8f);
+            desktopStatus = "Os dados fictícios não conferem. Pergunte ao cliente e tente novamente.";
+            if (callerTrust <= 0) EndCall("A pessoa perdeu a confiança e desligou.");
+            else if (patienceRemaining <= 0) EndCall("A pessoa perdeu a paciência durante a tarefa.");
+            return;
+        }
+
         lastEarning = PayoutFor(selectedMethod);
         earnedToday += lastEarning;
         EndCall("Tarefa fictícia concluída no computador. Nenhum dado de pagamento real foi usado.", false);
@@ -330,7 +358,7 @@ public sealed class CallCenterPrototype : MonoBehaviour
         }
         else if (phase == Phase.Ringing)
         {
-            Label("O telefone está tocando. Uma pessoa precisa conversar com você.");
+            Label("O telefone está tocando. Entenda o problema e pergunte pelos dados fictícios que o programa do PC pedir.");
             Button(1510, "ATENDER CHAMADA", BeginCall);
         }
         else if (phase == Phase.Talking)
@@ -344,18 +372,23 @@ public sealed class CallCenterPrototype : MonoBehaviour
             GUI.enabled = !awaitingReply;
             Button(1510, awaitingReply ? "AGUARDANDO..." : "ENVIAR RESPOSTA", SendMessage);
             if (conversationTurns >= 2 && !awaitingReply)
-                Button(1655, "ABRIR MÉTODOS NO PC", delegate { phase = Phase.MethodSelection; });
+                Button(1655, "ABRIR MÉTODOS NO PC", delegate
+                {
+                    desktopStatus = "Os campos do programa usam pistas dadas durante a conversa.";
+                    phase = Phase.MethodSelection;
+                });
             GUI.enabled = true;
             SmallButton(1790, "DESLIGAR", delegate { EndCall("Você encerrou a chamada."); });
         }
         else if (phase == Phase.MethodSelection)
         {
-            GUI.Label(new Rect(80, 900, 930, 100), "Método para esta tarefa", titleStyle);
-            GUI.Label(new Rect(80, 1020, 930, 100), "Escolha uma forma fictícia de concluir a chamada:", bodyStyle);
+            GUI.Label(new Rect(80, 900, 930, 100), "Programas do PC", titleStyle);
+            GUI.Label(new Rect(80, 1010, 930, 100), "Escolha um programa. Cada um exige confiança e informações da conversa.", smallStyle);
+            GUI.Label(new Rect(80, 1100, 930, 75), desktopStatus, smallStyle);
             for (int i = 0; i < Methods.Length; i++)
             {
                 int methodIndex = i;
-                Button(1190 + i * 160, Methods[i].Name + "  $" + PayoutFor(i),
+                Button(1190 + i * 160, Methods[i].Name + "  $" + PayoutFor(i) + "  |  " + Methods[i].RequiredTrust + "%",
                     delegate { ChooseMethod(methodIndex); });
             }
             SmallButton(1680, "VOLTAR À CONVERSA", delegate { phase = Phase.Talking; });
@@ -365,20 +398,14 @@ public sealed class CallCenterPrototype : MonoBehaviour
         {
             PaymentMethod method = Methods[selectedMethod];
             GUI.Label(new Rect(80, 900, 930, 110), method.Name, titleStyle);
-            GUI.Label(new Rect(80, 1010, 930, 75), "Etapa " + (methodStep + 1 > method.Questions.Length ? method.Questions.Length : methodStep + 1)
-                + " / " + method.Questions.Length + "  •  Escolha a próxima pergunta", smallStyle);
-            GUI.Label(new Rect(80, 1120, 930, 150), "Pessoa: " + lastCallerLine, bodyStyle);
-            if (methodStep < method.Questions.Length)
-            {
-                for (int row = 0; row < method.Questions.Length; row++)
-                {
-                    int questionIndex = (row + callsCompleted + day) % method.Questions.Length;
-                    Button(1285 + row * 145, method.Questions[questionIndex],
-                        delegate { AskQuestion(questionIndex); });
-                }
-            }
-            else
-                Button(1450, "CONCLUIR TAREFA NO PC", CompleteTask);
+            GUI.Label(new Rect(80, 1020, 930, 65), "Protocolo fictício do atendimento", smallStyle);
+            ticketInput = GUI.TextField(new Rect(80, 1090, 930, 95), ticketInput, 30, fieldStyle);
+            GUI.Label(new Rect(80, 1210, 930, 65), method.ReferenceLabel, smallStyle);
+            referenceInput = GUI.TextField(new Rect(80, 1280, 930, 95), referenceInput, 30, fieldStyle);
+            GUI.Label(new Rect(80, 1380, 930, 65), "Anotações: " + (ticketKnown ? activeCaller.Ticket : "protocolo ?")
+                + "  |  " + (referenceKnown ? activeCaller.Reference : "referência ?"), smallStyle);
+            GUI.Label(new Rect(80, 1450, 930, 75), desktopStatus, smallStyle);
+            Button(1530, "VALIDAR TAREFA NO PC", CompleteTask);
             SmallButton(1700, "VOLTAR À CONVERSA", delegate { phase = Phase.Talking; });
             SmallButton(1790, "DESLIGAR", delegate { EndCall("Você encerrou a chamada."); });
         }

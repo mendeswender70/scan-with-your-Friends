@@ -13,7 +13,7 @@ Corpo JSON enviado pelo jogo:
 }
 ```
 
-Resposta esperada: `{"reply":"Resposta curta do personagem"}`. Se o servidor falhar, a interface informa o erro e usa a resposta local para que a partida continue. Respostas atrasadas de uma chamada anterior são ignoradas.
+Resposta esperada: `{"reply":"Resposta curta do personagem"}`. O jogo responde localmente a pedidos de protocolo e referência fictícios, mantendo esses dados consistentes com a tarefa no PC. As demais mensagens podem ir ao servidor. Se ele falhar, a interface informa o erro e usa a resposta local para que a partida continue. Respostas atrasadas de uma chamada anterior são ignoradas.
 
 O serviço precisa manter a chave do provedor **somente no servidor**; ela não deve entrar no Unity, no repositório ou no aplicativo mobile. Para builds Android e iOS, o serviço precisa estar disponível por HTTPS. O servidor também deve limitar tamanho das mensagens, custo, taxa de requisições e conteúdo, e jamais pedir dados bancários reais. A lógica de dinheiro e da meta continua no jogo, fora do controle do modelo.
 
