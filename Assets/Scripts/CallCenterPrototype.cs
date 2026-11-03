@@ -5,6 +5,9 @@ public sealed class CallCenterPrototype : MonoBehaviour
 {
     private const int CallsPerDay = 5;
     private const int FirstQuota = 600;
+    private const float ShiftSeconds = 300f;
+    private const float RingSeconds = 20f;
+    private const float CallerPatienceSeconds = 75f;
 
     [SerializeField] private string dialogueServerUrl = "";
 
@@ -86,6 +89,11 @@ public sealed class CallCenterPrototype : MonoBehaviour
     private string dialogueStatus = "Simulação local, ainda sem IA";
     private bool awaitingReply;
     private int callSerial;
+    private int callerTrust;
+    private float shiftRemaining;
+    private float ringRemaining;
+    private float patienceRemaining;
+    private string previousMessage = "";
     private Caller activeCaller;
     private GUIStyle titleStyle;
     private GUIStyle bodyStyle;
@@ -105,6 +113,28 @@ public sealed class CallCenterPrototype : MonoBehaviour
         BuildOffice();
     }
 
+    private void Update()
+    {
+        if (phase == Phase.Morning || phase == Phase.Review) return;
+        shiftRemaining = Mathf.Max(0, shiftRemaining - Time.deltaTime);
+        if (shiftRemaining <= 0)
+        {
+            EndShift();
+            return;
+        }
+
+        if (phase == Phase.Ringing)
+        {
+            ringRemaining = Mathf.Max(0, ringRemaining - Time.deltaTime);
+            if (ringRemaining <= 0) EndCall("A chamada não foi atendida a tempo.");
+        }
+        else if (phase == Phase.Talking || phase == Phase.MethodSelection || phase == Phase.MethodSteps)
+        {
+            patienceRemaining = Mathf.Max(0, patienceRemaining - Time.deltaTime);
+            if (patienceRemaining <= 0) EndCall("A pessoa perdeu a paciência e desligou.");
+        }
+    }
+
     private void LateUpdate()
     {
         if (officeCamera == null) return;
@@ -122,6 +152,10 @@ public sealed class CallCenterPrototype : MonoBehaviour
         callSerial++;
         activeCaller = Callers[(callsCompleted + day - 1) % Callers.Length];
         conversationTurns = 0;
+        callerTrust = 45;
+        patienceRemaining = CallerPatienceSeconds;
+        previousMessage = "";
+        methodStep = 0;
         awaitingReply = false;
         typedMessage = "";
         lastPlayerLine = "";
@@ -168,35 +202,90 @@ public sealed class CallCenterPrototype : MonoBehaviour
         lastCallerLine = reply;
         dialogueHistory += "Você: " + lastPlayerLine + "\nPessoa: " + reply + "\n";
         conversationTurns++;
+        bool repeated = string.Equals(lastPlayerLine, previousMessage, System.StringComparison.OrdinalIgnoreCase);
+        callerTrust = Mathf.Clamp(callerTrust + (repeated ? -15 : 12), 0, 100);
+        previousMessage = lastPlayerLine;
         dialogueStatus = status;
+        if (callerTrust == 0) EndCall("A pessoa perdeu a confiança e desligou.");
     }
 
     private void ChooseMethod(int index)
     {
         if (phase != Phase.MethodSelection) return;
+        if (callerTrust < 55)
+        {
+            lastCallerLine = "Ainda não me sinto à vontade para continuar.";
+            callerTrust = Mathf.Max(0, callerTrust - 10);
+            if (callerTrust == 0) EndCall("A pessoa perdeu a confiança e desligou.");
+            return;
+        }
+        if (selectedMethod != index) methodStep = 0;
         selectedMethod = index;
-        methodStep = 0;
         lastCallerLine = "Vamos começar.";
         phase = Phase.MethodSteps;
     }
 
-    private void AskNextQuestion()
+    private void AskQuestion(int questionIndex)
     {
         if (phase != Phase.MethodSteps) return;
         PaymentMethod method = Methods[selectedMethod];
         if (methodStep >= method.Questions.Length) return;
-        lastCallerLine = method.Replies[methodStep];
-        methodStep++;
+
+        if (questionIndex == methodStep)
+        {
+            patienceRemaining = Mathf.Max(0, patienceRemaining - 4f);
+            lastCallerLine = method.Replies[methodStep];
+            methodStep++;
+        }
+        else
+        {
+            patienceRemaining = Mathf.Max(0, patienceRemaining - 10f);
+            callerTrust = Mathf.Max(0, callerTrust - 12);
+            lastCallerLine = "Essa pergunta não combina com o que conversamos agora.";
+        }
+
+        if (callerTrust <= 0) EndCall("A pessoa perdeu a confiança e desligou.");
+        else if (patienceRemaining <= 0) EndCall("A pessoa perdeu a paciência durante a tarefa.");
     }
 
     private void CompleteTask()
     {
-        if (phase != Phase.MethodSteps || methodStep != Methods[selectedMethod].Questions.Length) return;
+        if (phase != Phase.MethodSteps || methodStep != Methods[selectedMethod].Questions.Length ||
+            callerTrust < 55 || patienceRemaining <= 0) return;
         lastEarning = PayoutFor(selectedMethod);
         earnedToday += lastEarning;
+        EndCall("Tarefa fictícia concluída no computador. Nenhum dado de pagamento real foi usado.", false);
+    }
+
+    private void BeginShift()
+    {
+        shiftRemaining = ShiftSeconds;
+        phase = Phase.Standing;
+    }
+
+    private void StartRinging()
+    {
+        ringRemaining = RingSeconds;
+        phase = Phase.Ringing;
+    }
+
+    private void EndCall(string reason, bool zeroEarning = true)
+    {
+        if (phase != Phase.Ringing && phase != Phase.Talking &&
+            phase != Phase.MethodSelection && phase != Phase.MethodSteps) return;
+        callSerial++;
+        awaitingReply = false;
+        if (zeroEarning) lastEarning = 0;
         callsCompleted++;
-        resultText = "Tarefa fictícia concluída no computador. Nenhum dado de pagamento real foi usado.";
+        resultText = reason;
         phase = Phase.Result;
+    }
+
+    private void EndShift()
+    {
+        callSerial++;
+        awaitingReply = false;
+        phase = Phase.Review;
     }
 
     private void ResetDay(bool advance)
@@ -204,6 +293,7 @@ public sealed class CallCenterPrototype : MonoBehaviour
         if (advance) day++;
         callsCompleted = 0;
         earnedToday = 0;
+        shiftRemaining = 0;
         phase = Phase.Morning;
     }
 
@@ -220,19 +310,23 @@ public sealed class CallCenterPrototype : MonoBehaviour
         GUI.Label(new Rect(80, 75, 930, 90), "SCAN WITH YOUR FRIENDS", titleStyle);
         GUI.Label(new Rect(80, 180, 930, 75), "Dia " + day + "  |  Chamadas " + callsCompleted + "/" + CallsPerDay, bodyStyle);
         GUI.Label(new Rect(80, 280, 930, 75), "Dinheiro fictício: $" + earnedToday + " / $" + DailyQuota, bodyStyle);
-        GUI.Label(new Rect(80, 370, 930, 55), "Meta do expediente", smallStyle);
+        string statusLine = phase == Phase.Morning ? "Meta do expediente" : "Tempo " + FormatTime(shiftRemaining);
+        if (phase == Phase.Ringing) statusLine += "  |  Toques " + Mathf.CeilToInt(ringRemaining) + "s";
+        if (phase == Phase.Talking || phase == Phase.MethodSelection || phase == Phase.MethodSteps)
+            statusLine += "  |  Confiança " + callerTrust + "%  |  Paciência " + Mathf.CeilToInt(patienceRemaining) + "s";
+        GUI.Label(new Rect(80, 370, 930, 65), statusLine, smallStyle);
 
         bool viewingOffice = phase == Phase.Morning || phase == Phase.Standing;
         GUI.Box(viewingOffice ? new Rect(35, 1390, 1010, 490) : new Rect(35, 855, 1010, 1025), "", panelStyle);
         if (phase == Phase.Morning)
         {
             GUI.Label(new Rect(80, 1430, 930, 160), "O expediente vai começar. Entre no escritório e vá até sua mesa.", bodyStyle);
-            Button(1670, "INICIAR DIA", delegate { phase = Phase.Standing; });
+            Button(1670, "INICIAR DIA", BeginShift);
         }
         else if (phase == Phase.Standing)
         {
             GUI.Label(new Rect(80, 1430, 930, 160), "Sua mesa está à frente. Sente-se para usar o telefone e os programas do PC.", bodyStyle);
-            Button(1670, "SENTAR NO PC", delegate { phase = Phase.Ringing; });
+            Button(1670, "SENTAR NO PC", StartRinging);
         }
         else if (phase == Phase.Ringing)
         {
@@ -252,6 +346,7 @@ public sealed class CallCenterPrototype : MonoBehaviour
             if (conversationTurns >= 2 && !awaitingReply)
                 Button(1655, "ABRIR MÉTODOS NO PC", delegate { phase = Phase.MethodSelection; });
             GUI.enabled = true;
+            SmallButton(1790, "DESLIGAR", delegate { EndCall("Você encerrou a chamada."); });
         }
         else if (phase == Phase.MethodSelection)
         {
@@ -263,24 +358,39 @@ public sealed class CallCenterPrototype : MonoBehaviour
                 Button(1190 + i * 160, Methods[i].Name + "  $" + PayoutFor(i),
                     delegate { ChooseMethod(methodIndex); });
             }
+            SmallButton(1680, "VOLTAR À CONVERSA", delegate { phase = Phase.Talking; });
+            SmallButton(1790, "DESLIGAR", delegate { EndCall("Você encerrou a chamada."); });
         }
         else if (phase == Phase.MethodSteps)
         {
             PaymentMethod method = Methods[selectedMethod];
             GUI.Label(new Rect(80, 900, 930, 110), method.Name, titleStyle);
             GUI.Label(new Rect(80, 1010, 930, 75), "Etapa " + (methodStep + 1 > method.Questions.Length ? method.Questions.Length : methodStep + 1)
-                + " / " + method.Questions.Length, smallStyle);
+                + " / " + method.Questions.Length + "  •  Escolha a próxima pergunta", smallStyle);
             GUI.Label(new Rect(80, 1120, 930, 150), "Pessoa: " + lastCallerLine, bodyStyle);
             if (methodStep < method.Questions.Length)
-                Button(1450, method.Questions[methodStep], AskNextQuestion);
+            {
+                for (int row = 0; row < method.Questions.Length; row++)
+                {
+                    int questionIndex = (row + callsCompleted + day) % method.Questions.Length;
+                    Button(1285 + row * 145, method.Questions[questionIndex],
+                        delegate { AskQuestion(questionIndex); });
+                }
+            }
             else
                 Button(1450, "CONCLUIR TAREFA NO PC", CompleteTask);
+            SmallButton(1700, "VOLTAR À CONVERSA", delegate { phase = Phase.Talking; });
+            SmallButton(1790, "DESLIGAR", delegate { EndCall("Você encerrou a chamada."); });
         }
         else if (phase == Phase.Result)
         {
             Label(resultText);
             GUI.Label(new Rect(80, 1250, 930, 100), "+$" + lastEarning, titleStyle);
-            Button(1510, "CONTINUAR", delegate { phase = callsCompleted >= CallsPerDay ? Phase.Review : Phase.Ringing; });
+            Button(1510, "CONTINUAR", delegate
+            {
+                if (callsCompleted >= CallsPerDay || shiftRemaining <= 0) EndShift();
+                else StartRinging();
+            });
         }
         else
         {
@@ -302,6 +412,17 @@ public sealed class CallCenterPrototype : MonoBehaviour
     private void Button(float y, string text, System.Action action)
     {
         if (GUI.Button(new Rect(80, y, 930, 120), text, buttonStyle)) action();
+    }
+
+    private void SmallButton(float y, string text, System.Action action)
+    {
+        if (GUI.Button(new Rect(80, y, 930, 75), text, buttonStyle)) action();
+    }
+
+    private static string FormatTime(float seconds)
+    {
+        int total = Mathf.CeilToInt(seconds);
+        return (total / 60).ToString("00") + ":" + (total % 60).ToString("00");
     }
 
     private void EnsureStyles()

@@ -13,3 +13,5 @@ A cena é gerada pelo editor a partir dos scripts. Para um build Android, instal
 As mecânicas confirmadas, as observações do jogador e as escolhas próprias deste protótipo estão separadas em [Referências de jogabilidade](docs/GAMEPLAY_RESEARCH.md).
 
 A estrutura para ligar conversas livres a um servidor está descrita em [Conversa com IA](docs/AI_INTEGRATION.md). Ela permanece desligada até existir um provedor e um servidor configurado.
+
+As regras jogáveis atuais de tempo, chamadas, confiança, perguntas e meta estão em [Regras do protótipo](docs/PROTOTYPE_RULES.md). Esses números são provisórios e podem mudar após os testes no celular.
