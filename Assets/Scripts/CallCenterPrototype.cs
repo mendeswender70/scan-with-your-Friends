@@ -1,9 +1,12 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 public sealed class CallCenterPrototype : MonoBehaviour
 {
     private const int CallsPerDay = 5;
     private const int FirstQuota = 600;
+
+    [SerializeField] private string dialogueServerUrl = "";
 
     private enum Phase { Morning, Standing, Ringing, Talking, MethodSelection, MethodSteps, Result, Review }
 
@@ -79,12 +82,19 @@ public sealed class CallCenterPrototype : MonoBehaviour
     private string lastPlayerLine = "";
     private string lastCallerLine = "";
     private string resultText = "";
+    private string dialogueHistory = "";
+    private string dialogueStatus = "Simulação local, ainda sem IA";
+    private bool awaitingReply;
+    private int callSerial;
     private Caller activeCaller;
     private GUIStyle titleStyle;
     private GUIStyle bodyStyle;
     private GUIStyle smallStyle;
     private GUIStyle buttonStyle;
     private GUIStyle fieldStyle;
+    private GUIStyle panelStyle;
+    private Camera officeCamera;
+    private readonly List<Texture2D> uiTextures = new List<Texture2D>();
 
     private int DailyQuota { get { return FirstQuota * day; } }
 
@@ -95,25 +105,70 @@ public sealed class CallCenterPrototype : MonoBehaviour
         BuildOffice();
     }
 
+    private void LateUpdate()
+    {
+        if (officeCamera == null) return;
+        bool seated = phase == Phase.Ringing || phase == Phase.Talking ||
+            phase == Phase.MethodSelection || phase == Phase.MethodSteps || phase == Phase.Result;
+        Vector3 position = seated ? new Vector3(0, 2.8f, -2.7f) : new Vector3(5.8f, 6.2f, -9.5f);
+        Vector3 focus = seated ? new Vector3(0, 1.5f, 0.5f) : new Vector3(0, 0.8f, 1.2f);
+        officeCamera.transform.position = Vector3.Lerp(officeCamera.transform.position, position, Time.deltaTime * 2.5f);
+        Quaternion rotation = Quaternion.LookRotation(focus - officeCamera.transform.position);
+        officeCamera.transform.rotation = Quaternion.Slerp(officeCamera.transform.rotation, rotation, Time.deltaTime * 2.5f);
+    }
+
     private void BeginCall()
     {
+        callSerial++;
         activeCaller = Callers[(callsCompleted + day - 1) % Callers.Length];
         conversationTurns = 0;
+        awaitingReply = false;
         typedMessage = "";
         lastPlayerLine = "";
         lastCallerLine = activeCaller.Problem;
+        dialogueHistory = "";
+        dialogueStatus = string.IsNullOrWhiteSpace(dialogueServerUrl)
+            ? "Simulação local, ainda sem IA" : "Conversa livre com IA configurada";
         phase = Phase.Talking;
     }
 
     private void SendMessage()
     {
         string message = typedMessage.Trim();
-        if (phase != Phase.Talking || message.Length < 3) return;
+        if (phase != Phase.Talking || awaitingReply || message.Length < 3) return;
 
         lastPlayerLine = message;
-        lastCallerLine = conversationTurns == 0 ? activeCaller.FollowUp : activeCaller.ReadyLine;
-        conversationTurns++;
         typedMessage = "";
+        if (string.IsNullOrWhiteSpace(dialogueServerUrl))
+        {
+            ApplyReply(LocalReply(), "Simulação local, ainda sem IA");
+            return;
+        }
+
+        awaitingReply = true;
+        dialogueStatus = "Aguardando resposta da IA...";
+        int serial = callSerial;
+        StartCoroutine(DialogueGateway.Ask(dialogueServerUrl, activeCaller.Name, activeCaller.Problem,
+            dialogueHistory, message, delegate(string reply, string error)
+            {
+                if (serial != callSerial || phase != Phase.Talking) return;
+                awaitingReply = false;
+                ApplyReply(string.IsNullOrWhiteSpace(reply) ? LocalReply() : reply,
+                    error ?? "Conversa livre com IA configurada");
+            }));
+    }
+
+    private string LocalReply()
+    {
+        return conversationTurns == 0 ? activeCaller.FollowUp : activeCaller.ReadyLine;
+    }
+
+    private void ApplyReply(string reply, string status)
+    {
+        lastCallerLine = reply;
+        dialogueHistory += "Você: " + lastPlayerLine + "\nPessoa: " + reply + "\n";
+        conversationTurns++;
+        dialogueStatus = status;
     }
 
     private void ChooseMethod(int index)
@@ -161,22 +216,23 @@ public sealed class CallCenterPrototype : MonoBehaviour
         GUI.matrix = Matrix4x4.TRS(new Vector3(left, top, 0), Quaternion.identity, new Vector3(scale, scale, 1));
         EnsureStyles();
 
-        GUI.Box(new Rect(35, 35, 1010, 430), "");
+        GUI.Box(new Rect(35, 35, 1010, 430), "", panelStyle);
         GUI.Label(new Rect(80, 75, 930, 90), "SCAN WITH YOUR FRIENDS", titleStyle);
         GUI.Label(new Rect(80, 180, 930, 75), "Dia " + day + "  |  Chamadas " + callsCompleted + "/" + CallsPerDay, bodyStyle);
         GUI.Label(new Rect(80, 280, 930, 75), "Dinheiro fictício: $" + earnedToday + " / $" + DailyQuota, bodyStyle);
         GUI.Label(new Rect(80, 370, 930, 55), "Meta do expediente", smallStyle);
 
-        GUI.Box(new Rect(35, 855, 1010, 1025), "");
+        bool viewingOffice = phase == Phase.Morning || phase == Phase.Standing;
+        GUI.Box(viewingOffice ? new Rect(35, 1390, 1010, 490) : new Rect(35, 855, 1010, 1025), "", panelStyle);
         if (phase == Phase.Morning)
         {
-            Label("O expediente vai começar. Atenda chamadas e conclua tarefas no computador para bater a meta.");
-            Button(1510, "INICIAR DIA", delegate { phase = Phase.Standing; });
+            GUI.Label(new Rect(80, 1430, 930, 160), "O expediente vai começar. Entre no escritório e vá até sua mesa.", bodyStyle);
+            Button(1670, "INICIAR DIA", delegate { phase = Phase.Standing; });
         }
         else if (phase == Phase.Standing)
         {
-            Label("Você está no escritório. A sua mesa está logo à frente.");
-            Button(1510, "SENTAR NO PC", delegate { phase = Phase.Ringing; });
+            GUI.Label(new Rect(80, 1430, 930, 160), "Sua mesa está à frente. Sente-se para usar o telefone e os programas do PC.", bodyStyle);
+            Button(1670, "SENTAR NO PC", delegate { phase = Phase.Ringing; });
         }
         else if (phase == Phase.Ringing)
         {
@@ -189,11 +245,13 @@ public sealed class CallCenterPrototype : MonoBehaviour
             GUI.Label(new Rect(80, 1010, 930, 160), "Pessoa: " + lastCallerLine, bodyStyle);
             if (lastPlayerLine.Length > 0)
                 GUI.Label(new Rect(80, 1180, 930, 90), "Você: " + lastPlayerLine, smallStyle);
-            GUI.Label(new Rect(80, 1310, 930, 55), "Sua resposta (simulação local, ainda sem IA)", smallStyle);
+            GUI.Label(new Rect(80, 1300, 930, 65), dialogueStatus, smallStyle);
             typedMessage = GUI.TextField(new Rect(80, 1380, 930, 100), typedMessage, 160, fieldStyle);
-            Button(1510, "ENVIAR RESPOSTA", SendMessage);
-            if (conversationTurns >= 2)
+            GUI.enabled = !awaitingReply;
+            Button(1510, awaitingReply ? "AGUARDANDO..." : "ENVIAR RESPOSTA", SendMessage);
+            if (conversationTurns >= 2 && !awaitingReply)
                 Button(1655, "ABRIR MÉTODOS NO PC", delegate { phase = Phase.MethodSelection; });
+            GUI.enabled = true;
         }
         else if (phase == Phase.MethodSelection)
         {
@@ -249,43 +307,137 @@ public sealed class CallCenterPrototype : MonoBehaviour
     private void EnsureStyles()
     {
         if (titleStyle != null) return;
+        panelStyle = new GUIStyle(GUI.skin.box);
+        panelStyle.normal.background = SolidTexture(new Color(0.04f, 0.09f, 0.14f, 0.92f));
         titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 46, fontStyle = FontStyle.Bold, wordWrap = true };
-        titleStyle.normal.textColor = Color.white;
+        titleStyle.normal.textColor = new Color(0.52f, 0.94f, 0.93f);
         bodyStyle = new GUIStyle(GUI.skin.label) { fontSize = 38, wordWrap = true };
         bodyStyle.normal.textColor = Color.white;
         smallStyle = new GUIStyle(GUI.skin.label) { fontSize = 29, wordWrap = true };
-        smallStyle.normal.textColor = Color.white;
+        smallStyle.normal.textColor = new Color(0.76f, 0.85f, 0.9f);
         buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = 31, fontStyle = FontStyle.Bold, wordWrap = true };
+        buttonStyle.normal.background = SolidTexture(new Color(0.08f, 0.57f, 0.61f));
+        buttonStyle.hover.background = SolidTexture(new Color(0.1f, 0.7f, 0.7f));
+        buttonStyle.active.background = SolidTexture(new Color(0.04f, 0.43f, 0.48f));
+        buttonStyle.normal.textColor = Color.white;
+        buttonStyle.hover.textColor = Color.white;
+        buttonStyle.active.textColor = Color.white;
         fieldStyle = new GUIStyle(GUI.skin.textField) { fontSize = 34 };
+        fieldStyle.normal.background = SolidTexture(new Color(0.9f, 0.95f, 0.96f));
+        fieldStyle.normal.textColor = new Color(0.04f, 0.09f, 0.14f);
+    }
+
+    private Texture2D SolidTexture(Color color)
+    {
+        Texture2D texture = new Texture2D(1, 1, TextureFormat.RGBA32, false);
+        texture.SetPixel(0, 0, color);
+        texture.Apply();
+        uiTextures.Add(texture);
+        return texture;
+    }
+
+    private void OnDestroy()
+    {
+        foreach (Texture2D texture in uiTextures)
+            Destroy(texture);
     }
 
     private void BuildOffice()
     {
-        Camera camera = new GameObject("Camera").AddComponent<Camera>();
-        camera.transform.position = new Vector3(5, 5, -8);
-        camera.transform.LookAt(new Vector3(0, 0.7f, 0));
-        camera.clearFlags = CameraClearFlags.SolidColor;
-        camera.backgroundColor = new Color(0.08f, 0.11f, 0.19f);
+        officeCamera = new GameObject("Office Camera").AddComponent<Camera>();
+        officeCamera.transform.position = new Vector3(5.8f, 6.2f, -9.5f);
+        officeCamera.transform.LookAt(new Vector3(0, 0.8f, 1.2f));
+        officeCamera.fieldOfView = 72;
+        officeCamera.clearFlags = CameraClearFlags.SolidColor;
+        officeCamera.backgroundColor = new Color(0.12f, 0.19f, 0.25f);
+        RenderSettings.ambientLight = new Color(0.7f, 0.74f, 0.8f);
 
         Light light = new GameObject("Office Light").AddComponent<Light>();
         light.type = LightType.Directional;
-        light.intensity = 1.5f;
-        light.transform.rotation = Quaternion.Euler(45, -30, 0);
+        light.intensity = 1.3f;
+        light.transform.rotation = Quaternion.Euler(50, -35, 0);
 
-        Cube("Floor", new Vector3(0, -0.2f, 0), new Vector3(9, 0.25f, 8), new Color(0.14f, 0.2f, 0.28f));
-        Cube("Desk", new Vector3(0, 0.8f, 0), new Vector3(4, 0.25f, 2), new Color(0.47f, 0.3f, 0.2f));
-        Cube("Left Leg", new Vector3(-1.7f, 0.35f, 0), new Vector3(0.2f, 0.8f, 1.5f), new Color(0.3f, 0.2f, 0.17f));
-        Cube("Right Leg", new Vector3(1.7f, 0.35f, 0), new Vector3(0.2f, 0.8f, 1.5f), new Color(0.3f, 0.2f, 0.17f));
-        Cube("Monitor", new Vector3(0, 1.65f, 0.3f), new Vector3(1.7f, 1.2f, 0.12f), new Color(0.05f, 0.6f, 0.7f));
-        Cube("Chair", new Vector3(0, 0.5f, -2.3f), new Vector3(1.4f, 1, 0.35f), new Color(0.3f, 0.38f, 0.8f));
+        Color wall = new Color(0.33f, 0.42f, 0.49f);
+        Color floor = new Color(0.2f, 0.26f, 0.3f);
+        Cube("Carpet", new Vector3(0, -0.18f, 0), new Vector3(13, 0.25f, 13), floor);
+        Cube("Back wall", new Vector3(0, 2.4f, 6.5f), new Vector3(13, 5, 0.2f), wall);
+        Cube("Left wall", new Vector3(-6.5f, 2.4f, 0), new Vector3(0.2f, 5, 13), wall);
+        Cube("Wall trim", new Vector3(0, 0.25f, 6.34f), new Vector3(13, 0.25f, 0.18f), new Color(0.19f, 0.28f, 0.33f));
+        Cube("Window frame", new Vector3(-3.4f, 2.9f, 6.32f), new Vector3(3.7f, 2.2f, 0.11f), new Color(0.1f, 0.16f, 0.22f));
+        Cube("Window glass", new Vector3(-3.4f, 2.9f, 6.23f), new Vector3(3.4f, 1.9f, 0.08f), new Color(0.25f, 0.58f, 0.65f));
+        Cube("Window divider", new Vector3(-3.4f, 2.9f, 6.16f), new Vector3(0.08f, 1.9f, 0.09f), new Color(0.1f, 0.16f, 0.22f));
+        Cube("Office notice board", new Vector3(2.6f, 3.0f, 6.31f), new Vector3(2.6f, 1.7f, 0.13f), new Color(0.65f, 0.45f, 0.3f));
+        Cube("Notice", new Vector3(2.2f, 3.1f, 6.2f), new Vector3(0.8f, 0.9f, 0.03f), new Color(0.95f, 0.92f, 0.72f));
+        Cube("Notice 2", new Vector3(3.25f, 2.8f, 6.2f), new Vector3(0.7f, 0.7f, 0.03f), new Color(0.67f, 0.87f, 0.92f));
+
+        for (int i = 0; i < 9; i++)
+            Cube("Carpet seam " + i, new Vector3(-5.8f + i * 1.45f, -0.04f, 0),
+                new Vector3(0.015f, 0.01f, 12.5f), new Color(0.23f, 0.3f, 0.35f));
+
+        BuildDesk("Your desk", 0, -0.2f, new Color(0.08f, 0.66f, 0.72f));
+        BuildDesk("Coworker desk A", -3.7f, 3.4f, new Color(0.35f, 0.7f, 0.52f));
+        BuildDesk("Coworker desk B", 3.7f, 3.4f, new Color(0.74f, 0.48f, 0.28f));
+        BuildCoworker("Coworker A", -3.7f, 2.2f, new Color(0.45f, 0.7f, 0.58f));
+        BuildCoworker("Coworker B", 3.7f, 2.2f, new Color(0.85f, 0.58f, 0.38f));
+        BuildPlant("Office plant", -5.4f, 4.9f);
+
+        Cube("Reception cabinet", new Vector3(5.3f, 0.7f, -2.5f), new Vector3(1.1f, 1.4f, 2.2f), new Color(0.5f, 0.58f, 0.61f));
+        Cube("Cabinet drawer", new Vector3(4.72f, 0.95f, -2.5f), new Vector3(0.04f, 0.45f, 1.8f), new Color(0.3f, 0.39f, 0.44f));
+        Cube("Ceiling light", new Vector3(0, 4.5f, 2.2f), new Vector3(2.8f, 0.12f, 0.7f), new Color(0.95f, 0.92f, 0.72f));
+    }
+
+    private static void BuildDesk(string label, float x, float z, Color screenColor)
+    {
+        Color wood = new Color(0.57f, 0.39f, 0.26f);
+        Color metal = new Color(0.21f, 0.27f, 0.31f);
+        Cube(label + " top", new Vector3(x, 0.82f, z), new Vector3(2.8f, 0.15f, 1.4f), wood);
+        Cube(label + " left leg", new Vector3(x - 1.15f, 0.37f, z), new Vector3(0.13f, 0.76f, 1.1f), metal);
+        Cube(label + " right leg", new Vector3(x + 1.15f, 0.37f, z), new Vector3(0.13f, 0.76f, 1.1f), metal);
+        Cube(label + " monitor frame", new Vector3(x, 1.55f, z + 0.32f), new Vector3(1.25f, 0.9f, 0.12f), metal);
+        Cube(label + " monitor screen", new Vector3(x, 1.55f, z + 0.25f), new Vector3(1.1f, 0.74f, 0.03f), screenColor);
+        Cube(label + " monitor stand", new Vector3(x, 1.05f, z + 0.32f), new Vector3(0.12f, 0.22f, 0.12f), metal);
+        Cube(label + " keyboard", new Vector3(x, 0.94f, z - 0.32f), new Vector3(0.95f, 0.06f, 0.25f), metal);
+        Shape(label + " mouse", PrimitiveType.Sphere, new Vector3(x + 0.82f, 0.95f, z - 0.25f),
+            new Vector3(0.16f, 0.07f, 0.22f), metal);
+        Shape(label + " phone", PrimitiveType.Cylinder, new Vector3(x - 1.0f, 0.97f, z + 0.1f),
+            new Vector3(0.2f, 0.08f, 0.2f), new Color(0.12f, 0.62f, 0.39f));
+        Shape(label + " chair base", PrimitiveType.Cylinder, new Vector3(x, 0.25f, z - 1.3f),
+            new Vector3(0.55f, 0.12f, 0.55f), metal);
+        Cube(label + " chair seat", new Vector3(x, 0.55f, z - 1.3f), new Vector3(0.9f, 0.18f, 0.7f), metal);
+        Cube(label + " chair back", new Vector3(x, 1.06f, z - 1.65f), new Vector3(0.9f, 0.95f, 0.18f), metal);
+    }
+
+    private static void BuildCoworker(string label, float x, float z, Color shirt)
+    {
+        Shape(label + " body", PrimitiveType.Capsule, new Vector3(x, 1.1f, z),
+            new Vector3(0.55f, 0.85f, 0.45f), shirt);
+        Shape(label + " head", PrimitiveType.Sphere, new Vector3(x, 1.8f, z),
+            new Vector3(0.38f, 0.43f, 0.38f), new Color(0.79f, 0.54f, 0.38f));
+        Shape(label + " headset", PrimitiveType.Cylinder, new Vector3(x - 0.25f, 1.85f, z),
+            new Vector3(0.12f, 0.15f, 0.12f), new Color(0.1f, 0.13f, 0.17f));
+    }
+
+    private static void BuildPlant(string label, float x, float z)
+    {
+        Shape(label + " pot", PrimitiveType.Cylinder, new Vector3(x, 0.34f, z),
+            new Vector3(0.45f, 0.36f, 0.45f), new Color(0.67f, 0.39f, 0.27f));
+        Shape(label + " leaves", PrimitiveType.Sphere, new Vector3(x, 1.25f, z),
+            new Vector3(0.8f, 1.0f, 0.8f), new Color(0.2f, 0.56f, 0.34f));
+        Shape(label + " leaves high", PrimitiveType.Sphere, new Vector3(x + 0.25f, 1.65f, z),
+            new Vector3(0.55f, 0.65f, 0.55f), new Color(0.29f, 0.67f, 0.39f));
     }
 
     private static void Cube(string label, Vector3 position, Vector3 size, Color color)
     {
-        GameObject cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        cube.name = label;
-        cube.transform.position = position;
-        cube.transform.localScale = size;
-        cube.GetComponent<Renderer>().material.color = color;
+        Shape(label, PrimitiveType.Cube, position, size, color);
+    }
+
+    private static void Shape(string label, PrimitiveType type, Vector3 position, Vector3 size, Color color)
+    {
+        GameObject shape = GameObject.CreatePrimitive(type);
+        shape.name = label;
+        shape.transform.position = position;
+        shape.transform.localScale = size;
+        shape.GetComponent<Renderer>().material.color = color;
     }
 }
