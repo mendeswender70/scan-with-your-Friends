@@ -13,7 +13,7 @@ public sealed class CallCenterPrototype : MonoBehaviour
 
     private enum Phase { Morning, Standing, EnteringDesktop, DesktopIdle, Ringing, Talking, Result, Review }
     private enum DesktopApp { Home, Methods, Task, Notes }
-    private enum LocalIntent { Details, Ticket, Reference, Other }
+    private enum LocalIntent { Details, Ticket, Reference, Badge, Other }
 
     private struct Caller
     {
@@ -23,8 +23,10 @@ public sealed class CallCenterPrototype : MonoBehaviour
         public string ReadyLine;
         public string Ticket;
         public string Reference;
+        public string Badge;
 
-        public Caller(string name, string problem, string followUp, string readyLine, string ticket, string reference)
+        public Caller(string name, string problem, string followUp, string readyLine,
+            string ticket, string reference, string badge)
         {
             Name = name;
             Problem = problem;
@@ -32,6 +34,7 @@ public sealed class CallCenterPrototype : MonoBehaviour
             ReadyLine = readyLine;
             Ticket = ticket;
             Reference = reference;
+            Badge = badge;
         }
     }
 
@@ -40,38 +43,38 @@ public sealed class CallCenterPrototype : MonoBehaviour
         public string Name;
         public int FictionalAmount;
         public int RequiredTrust;
-        public string ReferenceLabel;
 
-        public PaymentMethod(string name, int amount, int requiredTrust, string referenceLabel)
+        public PaymentMethod(string name, int amount, int requiredTrust)
         {
             Name = name;
             FictionalAmount = amount;
             RequiredTrust = requiredTrust;
-            ReferenceLabel = referenceLabel;
         }
     }
 
     private static readonly Caller[] Callers =
     {
         new Caller("Marta, professora", "Troquei de celular e agora não consigo entrar no aplicativo da escola.",
-            "O aviso diz que preciso confirmar meu acesso, mas não explica como.", "Entendi. O que você recomenda fazer primeiro?", "ESC-104", "AULA"),
+            "O aviso diz que preciso confirmar meu acesso, mas não explica como.", "Entendi. O que você recomenda fazer primeiro?", "ESC-104", "AULA", "AZUL"),
         new Caller("Paulo, comerciante", "Meu computador travou quando tentei abrir a planilha de estoque.",
-            "Reiniciei uma vez, mas ele continua muito lento.", "Certo. Posso acompanhar as etapas com você.", "EST-208", "LOJA"),
+            "Reiniciei uma vez, mas ele continua muito lento.", "Certo. Posso acompanhar as etapas com você.", "EST-208", "LOJA", "VERDE"),
         new Caller("Renata, aposentada", "Recebi uma cobrança de uma assinatura que eu já tinha cancelado.",
-            "Tenho o comprovante do cancelamento guardado.", "Gostaria de entender como registrar essa reclamação.", "ASS-315", "CANCELAMENTO"),
+            "Tenho o comprovante do cancelamento guardado.", "Gostaria de entender como registrar essa reclamação.", "ASS-315", "CANCELAMENTO", "LARANJA"),
         new Caller("Davi, estudante", "Meu pedido aparece como entregue no aplicativo, mas não chegou aqui.",
-            "Já conferi na portaria e ninguém recebeu nada.", "Tudo bem. Vamos ver o que consta no atendimento.", "PED-422", "ENTREGA"),
+            "Já conferi na portaria e ninguém recebeu nada.", "Tudo bem. Vamos ver o que consta no atendimento.", "PED-422", "ENTREGA", "AZUL"),
         new Caller("Helena, designer", "Não estou conseguindo abrir meu e-mail de trabalho desde ontem.",
-            "Preciso acessar um arquivo que me enviaram hoje cedo.", "Pode me explicar quais são os próximos passos?", "MAIL-536", "ARQUIVO")
+            "Preciso acessar um arquivo que me enviaram hoje cedo.", "Pode me explicar quais são os próximos passos?", "MAIL-536", "ARQUIVO", "VERDE")
     };
 
     // These are fictional game tasks. They never request real payment details.
     private static readonly PaymentMethod[] Methods =
     {
-        new PaymentMethod("Gift card fictício", 180, 55, "Referência do item virtual"),
-        new PaymentMethod("Cartão de crédito fictício", 240, 70, "Referência da simulação"),
-        new PaymentMethod("Transferência de fichas", 120, 50, "Referência da tarefa")
+        new PaymentMethod("Gift card fictício", 180, 55),
+        new PaymentMethod("Cartão de crédito fictício", 240, 70),
+        new PaymentMethod("Transferência de fichas", 120, 50)
     };
+    private static readonly string[] BadgeOptions = { "AZUL", "VERDE", "LARANJA" };
+    private static readonly string[] RouteOptions = { "AULA", "LOJA", "CANCELAMENTO", "ENTREGA", "ARQUIVO" };
 
     private Phase phase = Phase.Morning;
     private int day = 1;
@@ -88,9 +91,14 @@ public sealed class CallCenterPrototype : MonoBehaviour
     private string dialogueStatus = "Sem IA: pergunte problema, protocolo ou referência";
     private string ticketInput = "";
     private string referenceInput = "";
+    private string badgeInput = "";
     private string desktopStatus = "";
     private bool ticketKnown;
     private bool referenceKnown;
+    private bool badgeKnown;
+    private int selectedBadge = -1;
+    private int selectedRoute = -1;
+    private int taskStage;
     private bool awaitingReply;
     private int callSerial;
     private int callerTrust;
@@ -182,8 +190,13 @@ public sealed class CallCenterPrototype : MonoBehaviour
         selectedMethod = -1;
         ticketInput = "";
         referenceInput = "";
+        badgeInput = "";
         ticketKnown = false;
         referenceKnown = false;
+        badgeKnown = false;
+        selectedBadge = -1;
+        selectedRoute = -1;
+        taskStage = 0;
         awaitingReply = false;
         typedMessage = "";
         lastPlayerLine = "";
@@ -192,7 +205,7 @@ public sealed class CallCenterPrototype : MonoBehaviour
         desktopApp = DesktopApp.Home;
         desktopStatus = "Escolha um programa quando estiver pronto para a tarefa.";
         dialogueStatus = string.IsNullOrWhiteSpace(dialogueServerUrl)
-            ? "Sem IA: pergunte problema, protocolo ou referência" : "Conversa livre com IA configurada";
+            ? "Sem IA: pergunte sobre o caso e as pistas do programa" : "Conversa livre com IA configurada";
         phase = Phase.Talking;
     }
 
@@ -204,9 +217,10 @@ public sealed class CallCenterPrototype : MonoBehaviour
         lastPlayerLine = message;
         typedMessage = "";
         LocalIntent intent = ClassifyIntent(message);
-        if (string.IsNullOrWhiteSpace(dialogueServerUrl) || intent == LocalIntent.Ticket || intent == LocalIntent.Reference)
+        if (string.IsNullOrWhiteSpace(dialogueServerUrl) || intent == LocalIntent.Ticket ||
+            intent == LocalIntent.Reference || intent == LocalIntent.Badge)
         {
-            ApplyReply(LocalReply(intent), "Sem IA: pergunte problema, protocolo ou referência", intent);
+            ApplyReply(LocalReply(intent), "Sem IA: resposta local para esta pista", intent);
             return;
         }
 
@@ -228,6 +242,9 @@ public sealed class CallCenterPrototype : MonoBehaviour
         string text = message.ToLowerInvariant();
         if (text.Contains("protocolo") || text.Contains("chamado") || text.Contains("ticket")) return LocalIntent.Ticket;
         if (text.Contains("refer") || text.Contains("palavra") || text.Contains("categoria")) return LocalIntent.Reference;
+        if (text.Contains("selo") || System.Text.RegularExpressions.Regex.IsMatch(text, @"\bcor\b") ||
+            text.Contains("símbolo") || text.Contains("simbolo") ||
+            text.Contains("emblema")) return LocalIntent.Badge;
         if (text.Contains("problema") || text.Contains("aconteceu") || text.Contains("aparece") || text.Contains("ajuda"))
             return LocalIntent.Details;
         return LocalIntent.Other;
@@ -237,6 +254,7 @@ public sealed class CallCenterPrototype : MonoBehaviour
     {
         if (intent == LocalIntent.Ticket) return "O protocolo fictício é " + activeCaller.Ticket + ".";
         if (intent == LocalIntent.Reference) return "A referência da tarefa é " + activeCaller.Reference + ".";
+        if (intent == LocalIntent.Badge) return "O selo fictício do meu registro é " + activeCaller.Badge + ".";
         if (intent == LocalIntent.Details)
             return conversationTurns == 0 ? activeCaller.FollowUp : activeCaller.ReadyLine;
         return "Não entendi bem. O que você precisa saber sobre meu atendimento?";
@@ -248,6 +266,7 @@ public sealed class CallCenterPrototype : MonoBehaviour
         phoneScroll.y = 100000f;
         if (intent == LocalIntent.Ticket) ticketKnown = true;
         if (intent == LocalIntent.Reference) referenceKnown = true;
+        if (intent == LocalIntent.Badge) badgeKnown = true;
         conversationTurns++;
         bool repeated = string.Equals(lastPlayerLine, previousMessage, System.StringComparison.OrdinalIgnoreCase);
         int trustChange = repeated ? -15 : intent == LocalIntent.Other ? 0 : intent == LocalIntent.Details ? 8 : 12;
@@ -270,9 +289,13 @@ public sealed class CallCenterPrototype : MonoBehaviour
         {
             ticketInput = "";
             referenceInput = "";
+            badgeInput = "";
+            selectedBadge = -1;
+            selectedRoute = -1;
+            taskStage = 0;
         }
         selectedMethod = index;
-        desktopStatus = "Preencha os campos com informações desta chamada. Se precisar, volte ao telefone.";
+        desktopStatus = "Use as pistas desta ligação. O telefone permanece aberto ao lado.";
         desktopApp = DesktopApp.Task;
     }
 
@@ -285,27 +308,80 @@ public sealed class CallCenterPrototype : MonoBehaviour
             desktopStatus = "A confiança caiu. Volte ao telefone antes de concluir a tarefa.";
             return;
         }
-        if (!ticketKnown || !referenceKnown)
+        if (selectedMethod == 0)
         {
-            desktopStatus = "Faltam informações da conversa. Pergunte ao cliente antes de validar.";
-            return;
+            if (taskStage == 0)
+            {
+                if (!referenceKnown)
+                {
+                    desktopStatus = "Pergunte qual é a referência do item virtual antes de procurá-lo.";
+                    return;
+                }
+                if (!Matches(referenceInput, activeCaller.Reference))
+                {
+                    RejectTaskAttempt("A referência não localizou o item. Confira com a pessoa.");
+                    return;
+                }
+                taskStage = 1;
+                desktopStatus = "Item encontrado. Confirme agora a cor do selo fictício com a pessoa.";
+                return;
+            }
+            if (!badgeKnown)
+            {
+                desktopStatus = "Pergunte a cor do selo fictício antes de ativar o item.";
+                return;
+            }
+            if (selectedBadge < 0 || !Matches(BadgeOptions[selectedBadge], activeCaller.Badge))
+            {
+                RejectTaskAttempt("O selo escolhido não combina com o registro da ligação.");
+                return;
+            }
         }
-
-        bool validTicket = string.Equals(ticketInput.Trim(), activeCaller.Ticket, System.StringComparison.OrdinalIgnoreCase);
-        bool validReference = string.Equals(referenceInput.Trim(), activeCaller.Reference, System.StringComparison.OrdinalIgnoreCase);
-        if (!validTicket || !validReference)
+        else if (selectedMethod == 1)
         {
-            callerTrust = Mathf.Max(0, callerTrust - 5);
-            patienceRemaining = Mathf.Max(0, patienceRemaining - 8f);
-            desktopStatus = "Os dados fictícios não conferem. Pergunte ao cliente e tente novamente.";
-            if (callerTrust <= 0) EndCall("A pessoa perdeu a confiança e desligou.");
-            else if (patienceRemaining <= 0) EndCall("A pessoa perdeu a paciência durante a tarefa.");
-            return;
+            if (!ticketKnown || !badgeKnown)
+            {
+                desktopStatus = "Faltam o protocolo e o selo fictício. Pergunte à pessoa.";
+                return;
+            }
+            if (!Matches(ticketInput, activeCaller.Ticket) || !Matches(badgeInput, activeCaller.Badge))
+            {
+                RejectTaskAttempt("A ficha simulada não combina com as pistas da conversa.");
+                return;
+            }
+        }
+        else
+        {
+            if (!ticketKnown || !referenceKnown)
+            {
+                desktopStatus = "Faltam o protocolo e a categoria da tarefa. Pergunte à pessoa.";
+                return;
+            }
+            if (!Matches(ticketInput, activeCaller.Ticket) || selectedRoute < 0 ||
+                !Matches(RouteOptions[selectedRoute], activeCaller.Reference))
+            {
+                RejectTaskAttempt("A rota de fichas não corresponde ao caso desta ligação.");
+                return;
+            }
         }
 
         lastEarning = PayoutFor(selectedMethod);
         earnedToday += lastEarning;
         EndCall("Tarefa fictícia concluída no computador. Nenhum dado de pagamento real foi usado.", false);
+    }
+
+    private static bool Matches(string input, string expected)
+    {
+        return string.Equals(input.Trim(), expected, System.StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void RejectTaskAttempt(string reason)
+    {
+        callerTrust = Mathf.Max(0, callerTrust - 5);
+        patienceRemaining = Mathf.Max(0, patienceRemaining - 8f);
+        desktopStatus = reason;
+        if (callerTrust <= 0) EndCall("A pessoa perdeu a confiança e desligou.");
+        else if (patienceRemaining <= 0) EndCall("A pessoa perdeu a paciência durante a tarefa.");
     }
 
     private void BeginShift()
@@ -558,12 +634,51 @@ public sealed class CallCenterPrototype : MonoBehaviour
         }
         PaymentMethod method = Methods[selectedMethod];
         GUI.Label(new Rect(825, 265, 690, 60), method.Name, titleStyle);
-        GUI.Label(new Rect(825, 340, 690, 42), "Protocolo fictício do atendimento", smallStyle);
-        ticketInput = GUI.TextField(new Rect(825, 385, 690, 60), ticketInput, 30, fieldStyle);
-        GUI.Label(new Rect(825, 455, 690, 42), method.ReferenceLabel, smallStyle);
-        referenceInput = GUI.TextField(new Rect(825, 500, 690, 60), referenceInput, 30, fieldStyle);
-        GUI.Label(new Rect(825, 570, 690, 70), desktopStatus, smallStyle);
-        UiButton(new Rect(825, 665, 690, 90), "VALIDAR TAREFA", CompleteTask);
+        if (selectedMethod == 0)
+        {
+            if (taskStage == 0)
+            {
+                GUI.Label(new Rect(825, 345, 690, 43), "1 / 2  Localize o item pela referência fictícia", smallStyle);
+                referenceInput = GUI.TextField(new Rect(825, 405, 690, 65), referenceInput, 30, fieldStyle);
+                GUI.Label(new Rect(825, 535, 690, 80), desktopStatus, smallStyle);
+                UiButton(new Rect(825, 665, 690, 90), "LOCALIZAR ITEM", CompleteTask);
+            }
+            else
+            {
+                GUI.Label(new Rect(825, 345, 690, 43), "2 / 2  Escolha a cor do selo do item", smallStyle);
+                for (int i = 0; i < BadgeOptions.Length; i++)
+                {
+                    int option = i;
+                    UiButton(new Rect(825 + i * 235, 420, 220, 78),
+                        (selectedBadge == i ? "● " : "") + BadgeOptions[i], delegate { selectedBadge = option; });
+                }
+                GUI.Label(new Rect(825, 535, 690, 80), desktopStatus, smallStyle);
+                UiButton(new Rect(825, 665, 690, 90), "ATIVAR ITEM VIRTUAL", CompleteTask);
+            }
+        }
+        else if (selectedMethod == 1)
+        {
+            GUI.Label(new Rect(825, 330, 690, 43), "Ficha de cartão de jogo — protocolo fictício", smallStyle);
+            ticketInput = GUI.TextField(new Rect(825, 380, 690, 62), ticketInput, 30, fieldStyle);
+            GUI.Label(new Rect(825, 460, 690, 43), "Selo de autorização fictício", smallStyle);
+            badgeInput = GUI.TextField(new Rect(825, 510, 690, 62), badgeInput, 30, fieldStyle);
+            GUI.Label(new Rect(825, 590, 690, 65), desktopStatus, smallStyle);
+            UiButton(new Rect(825, 665, 690, 90), "CONFERIR FICHA SIMULADA", CompleteTask);
+        }
+        else
+        {
+            GUI.Label(new Rect(825, 320, 690, 40), "Protocolo da ligação", smallStyle);
+            ticketInput = GUI.TextField(new Rect(825, 365, 690, 60), ticketInput, 30, fieldStyle);
+            GUI.Label(new Rect(825, 430, 690, 40), "Selecione a categoria da rota de fichas", smallStyle);
+            for (int i = 0; i < RouteOptions.Length; i++)
+            {
+                int option = i;
+                UiButton(new Rect(825 + (i % 3) * 235, 480 + (i / 3) * 68, 220, 58),
+                    (selectedRoute == i ? "● " : "") + RouteOptions[i], delegate { selectedRoute = option; });
+            }
+            GUI.Label(new Rect(825, 615, 690, 45), desktopStatus, smallStyle);
+            UiButton(new Rect(825, 670, 690, 85), "ENVIAR FICHAS VIRTUAIS", CompleteTask);
+        }
     }
 
     private void DrawNotesApp()
@@ -571,7 +686,8 @@ public sealed class CallCenterPrototype : MonoBehaviour
         GUI.Label(new Rect(825, 285, 690, 70), "Anotações do atendimento", titleStyle);
         GUI.Label(new Rect(825, 380, 690, 240),
             "Protocolo: " + (ticketKnown ? activeCaller.Ticket : "ainda não descoberto") + "\n\n" +
-            "Referência: " + (referenceKnown ? activeCaller.Reference : "ainda não descoberta"), bodyStyle);
+            "Referência: " + (referenceKnown ? activeCaller.Reference : "ainda não descoberta") + "\n\n" +
+            "Selo: " + (badgeKnown ? activeCaller.Badge : "ainda não descoberto"), smallStyle);
         GUI.Label(new Rect(825, 665, 690, 85),
             "Se faltar algo, pergunte à pessoa; o telefone continua aberto ao lado.", smallStyle);
     }

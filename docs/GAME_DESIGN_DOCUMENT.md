@@ -109,7 +109,7 @@ Critérios de aceitação da vertical slice:
 
 ## 8. Diferença para o protótipo atual
 
-O protótipo agora faz a passagem **mesa → desktop → chamada recebida → telefone e aplicativo simultâneos**. A câmera se aproxima do monitor, a interface do PC ocupa a tela e uma notificação oferece atender ou recusar. Durante a ligação, Telefone e aplicativos permanecem lado a lado. A implementação ainda usa `OnGUI`, sala feita de formas simples, casos e valores predefinidos e respostas locais por regras. Não há navegação física livre, IA ativa, áudio de ligação ou cooperativo. Os números atuais estão em [Regras do protótipo](PROTOTYPE_RULES.md).
+O protótipo agora faz a passagem **mesa → desktop → chamada recebida → telefone e aplicativo simultâneos**. A câmera se aproxima do monitor, a interface do PC ocupa a tela e uma notificação oferece atender ou recusar. Durante a ligação, Telefone e aplicativos permanecem lado a lado. Três programas exigem combinações diferentes de pistas fictícias; um deles tem duas etapas. A implementação ainda usa `OnGUI`, sala feita de formas simples, casos e valores predefinidos e respostas locais por regras. Não há navegação física livre, IA ativa, áudio de ligação ou cooperativo. Os números atuais estão em [Regras do protótipo](PROTOTYPE_RULES.md).
 
 O próximo teste com o jogador deve verificar se essa transição e o uso simultâneo dos aplicativos realmente transmitem a experiência de trabalhar no PC. Depois disso, a prioridade é aprofundar a conversa e as tarefas, antes de polir os gráficos da sala.
 
