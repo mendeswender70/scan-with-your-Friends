@@ -12,7 +12,7 @@ Para testar o ciclo da primeira chamada, inicie o dia, sente-se e atenda. Na con
 
 A cena é gerada pelo editor a partir dos scripts. Para um build Android, instale o módulo Android Build Support no Unity Hub e selecione Android em **File > Build Profiles**. Para iOS, abra o mesmo projeto no macOS com o módulo iOS Build Support e Xcode instalados. O protótipo ainda não implementa multiplayer nem chamadas com IA.
 
-As mecânicas confirmadas, as observações do jogador e as escolhas próprias deste protótipo estão separadas em [Referências de jogabilidade](docs/GAMEPLAY_RESEARCH.md).
+O [documento de design](docs/GAME_DESIGN_DOCUMENT.md) reúne a pesquisa do jogo de referência, o fluxo de escritório para desktop e a direção da versão mobile. As evidências confirmadas, as observações do jogador e as escolhas próprias deste protótipo também estão separadas em [Referências de jogabilidade](docs/GAMEPLAY_RESEARCH.md).
 
 A estrutura para ligar conversas livres a um servidor está descrita em [Conversa com IA](docs/AI_INTEGRATION.md). Ela permanece desligada até existir um provedor e um servidor configurado.
 
