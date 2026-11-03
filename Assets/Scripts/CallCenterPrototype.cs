@@ -3,88 +3,146 @@ using UnityEngine;
 public sealed class CallCenterPrototype : MonoBehaviour
 {
     private const int CallsPerDay = 5;
-    private const int DailyGoal = 300;
+    private const int FirstQuota = 600;
 
-    private enum Phase { Ready, OnCall, Result, DayEnd }
+    private enum Phase { Morning, Standing, Ringing, Talking, MethodSelection, MethodSteps, Result, Review }
 
     private struct Caller
     {
         public string Name;
-        public string Message;
-        public int FavoriteOption;
+        public string Problem;
+        public string FollowUp;
 
-        public Caller(string name, string message, int favoriteOption)
+        public Caller(string name, string problem, string followUp)
         {
             Name = name;
-            Message = message;
-            FavoriteOption = favoriteOption;
+            Problem = problem;
+            FollowUp = followUp;
+        }
+    }
+
+    private struct PaymentMethod
+    {
+        public string Name;
+        public int FictionalAmount;
+        public string[] Questions;
+        public string[] Replies;
+
+        public PaymentMethod(string name, int amount, string[] questions, string[] replies)
+        {
+            Name = name;
+            FictionalAmount = amount;
+            Questions = questions;
+            Replies = replies;
         }
     }
 
     private static readonly Caller[] Callers =
     {
-        new Caller("Lia, astronauta", "Preciso de algo para as segundas-feiras na Lua.", 0),
-        new Caller("Beto, jardineiro", "Minhas plantas querem tirar férias.", 1),
-        new Caller("Nina, inventora", "Quero uma ideia que ninguém leve a sério.", 2),
-        new Caller("Téo, padeiro", "Meu pão começou a contar piadas.", 0),
-        new Caller("Rita, capitã", "Meu navio está navegando em uma xícara.", 1)
+        new Caller("Lia, astronauta", "Meu calendário marcou segunda-feira duas vezes na Lua.", "Acho que preciso reorganizar minha semana espacial."),
+        new Caller("Beto, jardineiro", "Minhas plantas querem tirar férias antes de mim.", "Elas já escolheram uma praia imaginária."),
+        new Caller("Nina, inventora", "Minha máquina de fazer ideias ficou sem ideias.", "Um plano simples seria um ótimo começo."),
+        new Caller("Téo, padeiro", "Meu pão começou a contar piadas no forno.", "Agora a padaria inteira está rindo."),
+        new Caller("Rita, capitã", "Meu navio está navegando dentro de uma xícara.", "Talvez eu precise de um mapa bem pequeno.")
     };
 
-    private static readonly string[] Offers =
+    // These are fictional game tasks. They never request real payment details.
+    private static readonly PaymentMethod[] Methods =
     {
-        "Clube das segundas-feiras leves",
-        "Férias imaginárias para objetos",
-        "Curso de ideias absurdas"
+        new PaymentMethod("Gift card fictício", 180,
+            new[] { "Perguntar qual item virtual combina com a situação", "Confirmar o nome da missão no jogo", "Registrar a entrega imaginária no PC" },
+            new[] { "Escolhi um item virtual.", "Essa é a missão certa.", "Entrega registrada na simulação." }),
+        new PaymentMethod("Cartão de crédito fictício", 240,
+            new[] { "Confirmar a proposta fictícia escolhida", "Conferir o identificador da tarefa do jogo", "Concluir a simulação no PC" },
+            new[] { "Essa proposta funciona para mim.", "A tarefa do jogo está correta.", "Simulação concluída." }),
+        new PaymentMethod("Transferência de fichas", 120,
+            new[] { "Explicar o valor em fichas do jogo", "Confirmar a escolha do personagem", "Registrar as fichas no PC" },
+            new[] { "Entendi o valor em fichas.", "É essa minha escolha.", "Fichas registradas." })
     };
 
-    private Phase phase = Phase.Ready;
-    private Caller caller;
+    private Phase phase = Phase.Morning;
     private int day = 1;
-    private int callsMade;
-    private int earnings;
-    private int lastAward;
+    private int callsCompleted;
+    private int earnedToday;
+    private int conversationTurns;
+    private int selectedMethod;
+    private int methodStep;
+    private int lastEarning;
+    private string typedMessage = "";
+    private string lastPlayerLine = "";
+    private string lastCallerLine = "";
     private string resultText = "";
+    private Caller activeCaller;
     private GUIStyle titleStyle;
     private GUIStyle bodyStyle;
+    private GUIStyle smallStyle;
     private GUIStyle buttonStyle;
+    private GUIStyle fieldStyle;
+
+    private int DailyQuota { get { return FirstQuota * day; } }
+
+    private int PayoutFor(int methodIndex) { return Methods[methodIndex].FictionalAmount * day; }
 
     private void Awake()
     {
         BuildOffice();
     }
 
-    private void StartCall()
+    private void BeginCall()
     {
-        caller = Callers[(callsMade + day - 1) % Callers.Length];
-        phase = Phase.OnCall;
+        activeCaller = Callers[(callsCompleted + day - 1) % Callers.Length];
+        conversationTurns = 0;
+        typedMessage = "";
+        lastPlayerLine = "";
+        lastCallerLine = activeCaller.Problem;
+        phase = Phase.Talking;
     }
 
-    private void ChooseOffer(int index)
+    private void SendMessage()
     {
-        if (phase != Phase.OnCall) return;
+        string message = typedMessage.Trim();
+        if (phase != Phase.Talking || message.Length < 3) return;
 
-        bool matched = index == caller.FavoriteOption;
-        lastAward = matched ? 100 : 20;
-        earnings += lastAward;
-        callsMade++;
-        resultText = matched
-            ? caller.Name + " adorou a ideia. Você ganhou 100 pontos!"
-            : caller.Name + " achou engraçado, mas preferia outra proposta. Você ganhou 20 pontos.";
+        lastPlayerLine = message;
+        lastCallerLine = conversationTurns == 0 ? activeCaller.FollowUp : "Certo. Podemos continuar com a tarefa no computador.";
+        conversationTurns++;
+        typedMessage = "";
+    }
+
+    private void ChooseMethod(int index)
+    {
+        if (phase != Phase.MethodSelection) return;
+        selectedMethod = index;
+        methodStep = 0;
+        lastCallerLine = "Vamos começar.";
+        phase = Phase.MethodSteps;
+    }
+
+    private void AskNextQuestion()
+    {
+        if (phase != Phase.MethodSteps) return;
+        PaymentMethod method = Methods[selectedMethod];
+        if (methodStep >= method.Questions.Length) return;
+        lastCallerLine = method.Replies[methodStep];
+        methodStep++;
+    }
+
+    private void CompleteTask()
+    {
+        if (phase != Phase.MethodSteps || methodStep != Methods[selectedMethod].Questions.Length) return;
+        lastEarning = PayoutFor(selectedMethod);
+        earnedToday += lastEarning;
+        callsCompleted++;
+        resultText = "Tarefa fictícia concluída no computador. Nenhum dado de pagamento real foi usado.";
         phase = Phase.Result;
     }
 
-    private void Continue()
+    private void ResetDay(bool advance)
     {
-        phase = callsMade >= CallsPerDay ? Phase.DayEnd : Phase.Ready;
-    }
-
-    private void NextDay()
-    {
-        day++;
-        callsMade = 0;
-        earnings = 0;
-        lastAward = 0;
-        phase = Phase.Ready;
+        if (advance) day++;
+        callsCompleted = 0;
+        earnedToday = 0;
+        phase = Phase.Morning;
     }
 
     private void OnGUI()
@@ -96,51 +154,102 @@ public sealed class CallCenterPrototype : MonoBehaviour
         GUI.matrix = Matrix4x4.TRS(new Vector3(left, top, 0), Quaternion.identity, new Vector3(scale, scale, 1));
         EnsureStyles();
 
-        GUI.Box(new Rect(40, 40, 1000, 440), "");
-        GUI.Label(new Rect(85, 85, 910, 100), "SCAN WITH YOUR FRIENDS", titleStyle);
-        GUI.Label(new Rect(85, 200, 910, 80), "Dia " + day + "  •  Chamada " + callsMade + "/" + CallsPerDay, bodyStyle);
-        GUI.Label(new Rect(85, 295, 910, 80), "Pontos: " + earnings + " / " + DailyGoal, bodyStyle);
+        GUI.Box(new Rect(35, 35, 1010, 430), "");
+        GUI.Label(new Rect(80, 75, 930, 90), "SCAN WITH YOUR FRIENDS", titleStyle);
+        GUI.Label(new Rect(80, 180, 930, 75), "Dia " + day + "  |  Chamadas " + callsCompleted + "/" + CallsPerDay, bodyStyle);
+        GUI.Label(new Rect(80, 280, 930, 75), "Dinheiro fictício: $" + earnedToday + " / $" + DailyQuota, bodyStyle);
+        GUI.Label(new Rect(80, 370, 930, 55), "Meta do expediente", smallStyle);
 
-        GUI.Box(new Rect(40, 970, 1000, 900), "");
-        if (phase == Phase.Ready)
+        GUI.Box(new Rect(35, 855, 1010, 1025), "");
+        if (phase == Phase.Morning)
         {
-            GUI.Label(new Rect(85, 1020, 910, 170), "Seu turno começou. Atenda chamadas e apresente propostas absurdas para cumprir a meta.", bodyStyle);
-            if (GUI.Button(new Rect(85, 1420, 910, 130), "ATENDER CHAMADA", buttonStyle)) StartCall();
+            Label("O expediente vai começar. Atenda chamadas e conclua tarefas no computador para bater a meta.");
+            Button(1510, "INICIAR DIA", delegate { phase = Phase.Standing; });
         }
-        else if (phase == Phase.OnCall)
+        else if (phase == Phase.Standing)
         {
-            GUI.Label(new Rect(85, 1015, 910, 100), caller.Name, titleStyle);
-            GUI.Label(new Rect(85, 1130, 910, 170), caller.Message, bodyStyle);
-            for (int i = 0; i < Offers.Length; i++)
+            Label("Você está no escritório. A sua mesa está logo à frente.");
+            Button(1510, "SENTAR NO PC", delegate { phase = Phase.Ringing; });
+        }
+        else if (phase == Phase.Ringing)
+        {
+            Label("O telefone está tocando. Uma pessoa precisa conversar com você.");
+            Button(1510, "ATENDER CHAMADA", BeginCall);
+        }
+        else if (phase == Phase.Talking)
+        {
+            GUI.Label(new Rect(80, 900, 930, 100), activeCaller.Name, titleStyle);
+            GUI.Label(new Rect(80, 1010, 930, 160), "Pessoa: " + lastCallerLine, bodyStyle);
+            if (lastPlayerLine.Length > 0)
+                GUI.Label(new Rect(80, 1180, 930, 90), "Você: " + lastPlayerLine, smallStyle);
+            GUI.Label(new Rect(80, 1310, 930, 55), "Sua resposta (simulação local, ainda sem IA)", smallStyle);
+            typedMessage = GUI.TextField(new Rect(80, 1380, 930, 100), typedMessage, 160, fieldStyle);
+            Button(1510, "ENVIAR RESPOSTA", SendMessage);
+            if (conversationTurns >= 2)
+                Button(1655, "ABRIR MÉTODOS NO PC", delegate { phase = Phase.MethodSelection; });
+        }
+        else if (phase == Phase.MethodSelection)
+        {
+            GUI.Label(new Rect(80, 900, 930, 100), "Método para esta tarefa", titleStyle);
+            GUI.Label(new Rect(80, 1020, 930, 100), "Escolha uma forma fictícia de concluir a chamada:", bodyStyle);
+            for (int i = 0; i < Methods.Length; i++)
             {
-                if (GUI.Button(new Rect(85, 1360 + i * 155, 910, 125), Offers[i], buttonStyle)) ChooseOffer(i);
+                int methodIndex = i;
+                Button(1190 + i * 160, Methods[i].Name + "  $" + PayoutFor(i),
+                    delegate { ChooseMethod(methodIndex); });
             }
+        }
+        else if (phase == Phase.MethodSteps)
+        {
+            PaymentMethod method = Methods[selectedMethod];
+            GUI.Label(new Rect(80, 900, 930, 110), method.Name, titleStyle);
+            GUI.Label(new Rect(80, 1010, 930, 75), "Etapa " + (methodStep + 1 > method.Questions.Length ? method.Questions.Length : methodStep + 1)
+                + " / " + method.Questions.Length, smallStyle);
+            GUI.Label(new Rect(80, 1120, 930, 150), "Pessoa: " + lastCallerLine, bodyStyle);
+            if (methodStep < method.Questions.Length)
+                Button(1450, method.Questions[methodStep], AskNextQuestion);
+            else
+                Button(1450, "CONCLUIR TAREFA NO PC", CompleteTask);
         }
         else if (phase == Phase.Result)
         {
-            GUI.Label(new Rect(85, 1040, 910, 260), resultText, bodyStyle);
-            GUI.Label(new Rect(85, 1290, 910, 90), "+" + lastAward + " pontos", titleStyle);
-            if (GUI.Button(new Rect(85, 1510, 910, 130), "CONTINUAR", buttonStyle)) Continue();
+            Label(resultText);
+            GUI.Label(new Rect(80, 1250, 930, 100), "+$" + lastEarning, titleStyle);
+            Button(1510, "CONTINUAR", delegate { phase = callsCompleted >= CallsPerDay ? Phase.Review : Phase.Ringing; });
         }
         else
         {
-            string summary = earnings >= DailyGoal ? "Meta cumprida!" : "Meta não atingida. Tente outra estratégia!";
-            GUI.Label(new Rect(85, 1050, 910, 120), summary, titleStyle);
-            GUI.Label(new Rect(85, 1190, 910, 170), "Você encerrou o dia com " + earnings + " pontos em " + CallsPerDay + " chamadas.", bodyStyle);
-            if (GUI.Button(new Rect(85, 1510, 910, 130), "PRÓXIMO DIA", buttonStyle)) NextDay();
+            bool passed = earnedToday >= DailyQuota;
+            GUI.Label(new Rect(80, 900, 930, 150), passed ? "Meta cumprida!" : "Meta não atingida", titleStyle);
+            GUI.Label(new Rect(80, 1080, 930, 180),
+                "Avaliação do chefe: $" + earnedToday + " arrecadados em " + CallsPerDay + " chamadas. Meta: $" + DailyQuota + ".", bodyStyle);
+            Button(1510, passed ? "PRÓXIMO DIA" : "REINICIAR DIA", delegate { ResetDay(passed); });
         }
 
         GUI.matrix = previous;
     }
 
+    private void Label(string text)
+    {
+        GUI.Label(new Rect(80, 920, 930, 290), text, bodyStyle);
+    }
+
+    private void Button(float y, string text, System.Action action)
+    {
+        if (GUI.Button(new Rect(80, y, 930, 120), text, buttonStyle)) action();
+    }
+
     private void EnsureStyles()
     {
         if (titleStyle != null) return;
-        titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 48, fontStyle = FontStyle.Bold, wordWrap = true };
+        titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 46, fontStyle = FontStyle.Bold, wordWrap = true };
         titleStyle.normal.textColor = Color.white;
         bodyStyle = new GUIStyle(GUI.skin.label) { fontSize = 38, wordWrap = true };
         bodyStyle.normal.textColor = Color.white;
-        buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = 34, fontStyle = FontStyle.Bold, wordWrap = true };
+        smallStyle = new GUIStyle(GUI.skin.label) { fontSize = 29, wordWrap = true };
+        smallStyle.normal.textColor = Color.white;
+        buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = 31, fontStyle = FontStyle.Bold, wordWrap = true };
+        fieldStyle = new GUIStyle(GUI.skin.textField) { fontSize = 34 };
     }
 
     private void BuildOffice()
